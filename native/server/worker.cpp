@@ -202,6 +202,11 @@ void Worker::run(const json & job) {
         steps_.analyze(cid, step_log);
     } else if (kind == "script") {
         steps_.produce(cid, job.value("director", ""), step_log);
+    } else if (kind == "prepare") {   // both in one job (queued by a short-lived version): one progress bar
+        const StepLog part1 = [&](const std::string & m, const std::string & stage, double p) { step_log(m, stage, 0.3 * p); };
+        const StepLog part2 = [&](const std::string & m, const std::string & stage, double p) { step_log(m, stage, 0.3 + 0.7 * p); };
+        steps_.analyze(cid, part1);
+        steps_.produce(cid, job.value("director", ""), part2);
     } else if (kind == "narrate") {
         const json ch = *db_.one("SELECT novel_id FROM chapters WHERE id=?", {cid});
         const json novel = *db_.one("SELECT * FROM novels WHERE id=?", {ch["novel_id"]});

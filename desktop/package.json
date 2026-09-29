@@ -18,7 +18,10 @@
   "build": {
     "appId": "local.fine-ill-read-it-myself",
     "files": [
-      "main.js"
+      "main.js",
+      "icon.png",
+      "tray.png",
+      "tray@2x.png"
     ],
     "extraResources": [
       {
@@ -39,7 +42,8 @@
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "icon.ico"
     },
     "linux": {
       "target": "AppImage"

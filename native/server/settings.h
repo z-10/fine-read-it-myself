@@ -46,6 +46,8 @@ struct Settings {
     double check_interval_hours = 6.0;
     std::string mp3_bitrate = "96k";
     std::string voice_catalog = kDefaultVoiceCatalog;   // base URL of the downloadable voices (pool.json + files)
+    bool share_network = false;   // also serve the UI + API to other devices on the network (no password)
+    int share_port = 8765;
 
     const DirectorProfile * director_profile(const std::string & name) const;
     nlohmann::json to_json(bool mask_keys) const;

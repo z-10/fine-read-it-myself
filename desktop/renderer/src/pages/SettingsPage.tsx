@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, type Producer, type ProducerProfile, type Settings, type SetupState } from '../api'
+import { api, type Producer, type ProducerProfile, type Settings, type SetupState, type ShareState } from '../api'
 
 const EMPTY: ProducerProfile = { name: '', base_url: '', api_key: '', model: '', json_schema: true }
 const gb = (n: number) => `${(n / 1e9).toFixed(1)} GB`
@@ -12,6 +12,9 @@ export default function SettingsPage() {
   const [setup, setSetup] = useState<SetupState | null>(null)
   const [msg, setMsg] = useState('')
   const [error, setError] = useState('')
+  const [share, setShare] = useState<ShareState | null>(null)
+  const loadShare = () => setTimeout(() => api.share().then(setShare).catch(() => {}), 400)   // after the listener (re)starts
+  useEffect(() => { api.share().then(setShare).catch(() => {}) }, [])
 
   const loadModels = () => {
     api.setup().then(setSetup).catch((e) => setError((e as Error).message))
@@ -69,8 +72,10 @@ export default function SettingsPage() {
               <td className="small muted">{gb(m.size)}</td>
               <td className="small muted">{m.license}</td>
               <td>{m.installed ? <span className="step done">installed</span>
-                : setup?.installing ? <span className="small muted">{setup.current === m.title ? `${pct}%` : 'waiting'}</span>
-                : <button className="small-btn" onClick={() => api.installModels([m.id]).then(setSetup).catch((e) => setError((e as Error).message))}>
+                : setup?.installing && setup.current === m.title ? <span className="small muted">{pct}%</span>
+                : setup?.installing && m.id === 'llm' ? <span className="small muted">waiting</span>   // part of the first-start download
+                : <button className="small-btn" disabled={setup?.installing} title={setup?.installing ? 'after the current download' : undefined}
+                    onClick={() => api.installModels([m.id]).then(setSetup).catch((e) => setError((e as Error).message))}>
                     Download</button>}</td>
             </tr>
           ))}
@@ -94,6 +99,22 @@ export default function SettingsPage() {
             value={d.api_key} onBlur={commit} onChange={(e) => setProfile(i, { api_key: e.target.value })} /></label>
         </div>))}
       <button className="ghost" onClick={() => set('directors', [...s.directors, { ...EMPTY }])}>+ Add producer</button>
+
+      <h3>Share on my network</h3>
+      <p className="muted small">Open this app from a browser on your phone, tablet or another computer on the same network.
+        {' '}<b>There is no password:</b> anyone on your network can then use it, including deleting novels and voices — only
+        turn this on at home or on a network you trust. Windows may ask to allow the app through its firewall.</p>
+      {share?.forced
+        ? <p className="note">Started in server mode (--serve): always shared on port {share.port}.</p>
+        : <>
+            <label><input type="checkbox" checked={s.share_network}
+              onChange={(e) => { set('share_network', e.target.checked, true); loadShare() }} /> Share on my network</label>
+            <label>Port <input type="number" min={1024} max={65535} value={s.share_port}
+              onBlur={() => { commit(); loadShare() }} onChange={(e) => set('share_port', Number(e.target.value))} /></label>
+          </>}
+      {share?.running && share.urls.length > 0 && (
+        <p>Open on other devices: {share.urls.map((u) => <code key={u} style={{ marginRight: 12 }}>{u}</code>)}</p>)}
+      {share?.error && <p className="error">{share.error}</p>}
 
       <h3>Defaults</h3>
       <label>Default producer{' '}

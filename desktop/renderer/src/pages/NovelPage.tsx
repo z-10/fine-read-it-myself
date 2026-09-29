@@ -3,9 +3,9 @@ import { api, audioUrl, sampleUrl, stepState, type Chapter, type Character, type
 import { ago, fmtDate, PITCHES, ProducerSelect, StepBadges, VoiceCells } from '../components'
 
 const PAGE_SIZES = [25, 50, 100, 200, 0] as const   // 0 = all
-type Filter = 'all' | 'no-analysis' | 'no-script' | 'no-audio' | 'outdated' | 'issues'
+type Filter = 'all' | 'no-analysis' | 'no-script' | 'to-check' | 'no-audio' | 'outdated' | 'issues'
 const FILTERS: [Filter, string][] = [
-  ['all', 'all'], ['no-analysis', 'not analyzed'], ['no-script', 'no script'], ['no-audio', 'no audio'],
+  ['all', 'all'], ['no-analysis', 'not analyzed'], ['no-script', 'no script'], ['to-check', 'to check'], ['no-audio', 'no audio'],
   ['outdated', 'outdated'], ['issues', 'quality issues'],
 ]
 
@@ -13,6 +13,7 @@ function matches(c: Chapter, f: Filter) {
   switch (f) {
     case 'no-analysis': return stepState(c, 'analyze') === 'none'
     case 'no-script': return stepState(c, 'script') === 'none'
+    case 'to-check': return c.to_check > 0   // speakers left for you to confirm
     case 'no-audio': return stepState(c, 'narrate') === 'none'
     case 'outdated': return stepState(c, 'script') === 'outdated' || stepState(c, 'narrate') === 'outdated'
     case 'issues': return !!c.quality_issues

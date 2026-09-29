@@ -12,7 +12,7 @@ export default function ChapterPage({ id, initialTab }: { id: number; initialTab
   const [ch, setCh] = useState<Chapter | null>(null)
   const [producers, setProducers] = useState<Producer[]>([])
   const [producer, setProducer] = useState('')
-  const [tab, setTab] = useState<Tab>('analysis')
+  const [tab, setTab] = useState<Tab>('script')
   const [error, setError] = useState('')
   const [dirty, setDirty] = useState(false)   // unsaved edits in the open editor
   const [version, setVersion] = useState(0)   // bump to reload artifacts after a step finished
@@ -41,6 +41,8 @@ export default function ChapterPage({ id, initialTab }: { id: number; initialTab
 
   async function run(steps: Step[]) {
     if (dirty && !confirm('You have unsaved edits. Run anyway (they stay in the editor)?')) return
+    if (steps.includes('analyze') && ch?.analyzed_at &&
+        !confirm('Analyzing again rebuilds the quotes from the chapter text: quote edits you made are lost (speakers you set are kept). Go on?')) return
     try {
       await api.run(id, steps, steps.includes('script') ? producer : '')
       await load()
@@ -93,43 +95,53 @@ export default function ChapterPage({ id, initialTab }: { id: number; initialTab
         {(['analysis', 'script', 'narration'] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? 'on' : ''}
             onClick={() => { if (!dirty || confirm('Discard unsaved edits?')) { setDirty(false); setTab(t) } }}>
-            {t === 'analysis' ? '1 · Analysis' : t === 'script' ? '2 · Script' : '3 · Narration'}
+            {t === 'analysis' ? '1 · Analysis (quotes)' : t === 'script' ? '2 · Script (speakers)' : '3 · Narration'}
           </button>
         ))}
       </div>
-      {tab === 'analysis' && <AnalysisEditor key={version} id={id} novelId={ch.novel_id} setDirty={setDirty} onSaved={load} />}
+      {tab === 'analysis' && <QuotesEditor key={version} id={id} setDirty={setDirty} onSaved={load} />}
       {tab === 'script' && <ScriptEditor key={version} id={id} novelId={ch.novel_id} narrated={ch.narrated_at} setDirty={setDirty} onSaved={load} />}
       {tab === 'narration' && <NarrationView key={version} ch={ch} />}
     </>
   )
 }
 
-// ---------------------------------------------------------------- 1. analysis
+// ---------------------------------------------------------------- 1. analysis: what is a quote
 
-function AnalysisEditor({ id, novelId, setDirty, onSaved }: {
-  id: number; novelId: number; setDirty: (d: boolean) => void; onSaved: () => void
-}) {
+// The chapter as it reads, quotes highlighted. Fix what is (not) speech here: "not a quote" on a quote, or select
+// words in the narration and "make quote". Who speaks is decided in the script (step 2).
+function QuotesEditor({ id, setDirty, onSaved }: { id: number; setDirty: (d: boolean) => void; onSaved: () => void }) {
   const [a, setA] = useState<Analysis | null>(null)
   const [orig, setOrig] = useState('')
-  const [cast, setCast] = useState<Character[]>([])
-  const [editing, setEditing] = useState<number | null>(null)
   const [msg, setMsg] = useState('')
   const [missing, setMissing] = useState(false)
-  const [pick, setPick] = useState<{ sid: number; start: number; end: number } | null>(null)   // text selected in narration
+  // words selected in the narration (mouse, keyboard or touch) and where to float the "make quote" button
+  const [pick, setPick] = useState<{ sid: number; start: number; end: number; x: number; y: number } | null>(null)
+  useEffect(() => {
+    const update = () => {
+      const sel = window.getSelection()
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return setPick(null)
+      const r = sel.getRangeAt(0)
+      const el = r.startContainer.parentElement?.closest<HTMLElement>('.narr[data-sid]')
+      // within one stretch of narration only (a quote can't span a quote or a paragraph break)
+      if (!el || r.startContainer !== r.endContainer || r.endOffset <= r.startOffset) return setPick(null)
+      const box = r.getBoundingClientRect()
+      setPick({ sid: Number(el.dataset.sid), start: r.startOffset, end: r.endOffset, x: box.left + scrollX, y: box.top + scrollY })
+    }
+    document.addEventListener('selectionchange', update)
+    addEventListener('scroll', update, { passive: true })
+    return () => { document.removeEventListener('selectionchange', update); removeEventListener('scroll', update) }
+  }, [])
 
   useEffect(() => {
     api.analysis(id).then((x) => { setA(x); setOrig(JSON.stringify(x)) }).catch(() => setMissing(true))
-    api.cast(novelId).then(setCast)
   }, [id])
   const dirty = !!a && JSON.stringify(a) !== orig
   useEffect(() => setDirty(dirty), [dirty])
 
-  if (missing) return <p className="empty">Not analyzed yet. Run step 1.</p>
+  if (missing) return <p className="empty">Not analyzed yet. Run “Analyze”.</p>
   if (!a) return <p className="hint">Loading…</p>
-  const names = [...new Set([...SPECIAL.slice(1), ...a.characters.map((c) => c.name), ...cast.map((c) => c.name)])]
-  const setSpan = (sid: number, p: Partial<Analysis['spans'][number]>) =>
-    setA({ ...a, spans: a.spans.map((s) => (s.id === sid ? { ...s, ...p } : s)) })
-  // "Not a quote": the quote goes back into the narration around it (same paragraph), quote marks kept
+  // "not a quote": the quote goes back into the narration around it (same paragraph), quote marks kept
   const absorb = (sid: number) => {
     const i = a.spans.findIndex((x) => x.id === sid)
     const q = a.spans[i]
@@ -141,35 +153,31 @@ function AnalysisEditor({ id, novelId, setDirty, onSaved }: {
     setA({ ...a, spans: [...a.spans.slice(0, from), merged, ...a.spans.slice(to + 1)] })
     setPick(null)
   }
-  // "Make quote": the selected part of a narration span becomes a quote (speaker to set by the user)
+  // "make quote": the selected words of a narration span become a quote; its speaker is found in step 2
   const makeQuote = (sid: number, start: number, end: number) => {
     const i = a.spans.findIndex((x) => x.id === sid)
     const n = a.spans[i]
-    const marks = /^[\s“”"]+|[\s“”"]+$/g
     const before = n.text.slice(0, start).replace(/[\s“"]+$/, '').trim()
-    const inner = n.text.slice(start, end).replace(marks, '')
+    const inner = n.text.slice(start, end).replace(/^[\s“”"]+|[\s“”"]+$/g, '')
     const after = n.text.slice(end).replace(/^[\s”"]+/, '').trim()
     if (!inner) return
     let next = Math.max(...a.spans.map((x) => x.id)) + 1
     const parts: Span[] = []
-    if (before) parts.push({ ...n, id: n.id, text: before, by: 'user' })
+    if (before) parts.push({ ...n, text: before, by: 'user' })
     parts.push({ id: before ? next++ : n.id, para: n.para, kind: 'dialogue', text: inner, speaker: 'Unknown', by: 'user' })
     if (after) parts.push({ ...n, id: next++, text: after, by: 'user' })
     setA({ ...a, spans: [...a.spans.slice(0, i), ...parts, ...a.spans.slice(i + 1)] })
     setPick(null)
   }
-  const byPara = new Map<number, Analysis['spans']>()
+  const byPara = new Map<number, Span[]>()
   a.spans.forEach((s) => byPara.set(s.para, [...(byPara.get(s.para) ?? []), s]))
-  const dialogue = a.spans.filter((s) => s.kind === 'dialogue')
-  const unknown = dialogue.filter((s) => !s.speaker || s.speaker === 'Unknown').length
-  const flagged = dialogue.filter((s) => s.check).length
-
+  const quotes = a.spans.filter((s) => s.kind === 'dialogue').length
   async function save() {
     try {
       const saved = await api.saveAnalysis(id, a!)
       setA(saved)
       setOrig(JSON.stringify(saved))
-      setMsg('Saved. The script is now outdated; produce it again to use these changes.')
+      setMsg('Saved. Run “Script” again so the speakers follow these quotes.')
       onSaved()
     } catch (err) {
       setMsg((err as Error).message)
@@ -179,103 +187,52 @@ function AnalysisEditor({ id, novelId, setDirty, onSaved }: {
   return (
     <>
       <div className="editor-bar">
-        <span className="small muted">
-          {a.detector === 'modernbooknlp' ? 'Speakers detected by ModernBookNLP' : 'Made without speaker detection: run step 1 again'}
-          {' · '}{dialogue.length} dialogue lines{unknown ? `, ${unknown} without a speaker` : ''}
-          {flagged ? `, ${flagged} uncertain` : ''}
-          {' · the producer double-checks every quote; speakers you set here are final'}
-        </span>
+        <span className="small muted">{quotes} quotes · who speaks them is set in the script</span>
         <span className="spacer" />
         {msg && <span className="note">{msg}</span>}
-        <button className="ghost" disabled={!dirty} onClick={() => setA(JSON.parse(orig))}>Discard</button>
+        <button className="ghost" disabled={!dirty} onClick={() => { setA(JSON.parse(orig)); setPick(null) }}>Discard</button>
         <button disabled={!dirty} onClick={save}>Save</button>
       </div>
-      {a.characters.length > 0 && (
-        <p className="small muted">Characters: {a.characters.map((c) => `${c.name} (${c.gender === 'female' ? 'F' : 'M'})`).join(', ')}</p>
+      <p className="small muted">Quotes are highlighted. Something quoted that isn't speech (a sign, a title, a word in quotation
+        marks): “not a quote”. Speech the text doesn't put in quotation marks: select the words, then “make quote”.</p>
+      {pick && (   // floats above the selection; acts on press, before a phone drops the selection
+        <button className="tiny on make-float" style={{ left: pick.x, top: pick.y - 34 }}
+          onPointerDown={(e) => { e.preventDefault(); makeQuote(pick.sid, pick.start, pick.end); window.getSelection()?.removeAllRanges() }}>
+          make quote</button>
       )}
-      <ReviewRuler selector=".dl.to-check" version={a.spans.filter((x) => x.check).map((x) => x.id).join(',')} />
-      <div className="doc">
+      <div className="doc reading">
         {[...byPara.entries()].map(([p, spans]) => (
-          <div key={p} className="para">
+          <p key={p} className="para">
             {spans.map((s) => s.kind === 'dialogue' ? (
-              <div key={s.id} className={`dl${s.check ? ' to-check' : ''}`} data-level={s.check ? 'check' : undefined}>
-                <SpeakerPick names={names} value={s.speaker ?? 'Unknown'} title={s.check ? `To check: ${s.check}` : undefined}
-                  className={`speaker ${!s.speaker || s.speaker === 'Unknown' ? 'unknown' : ''} ${s.check ? 'check' : ''}`}
-                  onChange={(v) => setSpan(s.id, { speaker: v, check: undefined, by: 'user' })} />
-                <SpanText value={s.text} editing={editing === s.id} onEdit={() => setEditing(s.id)}
-                  onChange={(t) => setSpan(s.id, { text: t, by: 'user' })} onDone={() => setEditing(null)} quote />
-                <button className="ghost tiny" title="Not speech: put it back into the narration" onClick={() => absorb(s.id)}>not a quote</button>
-              </div>
+              <span key={s.id} className="quote" tabIndex={0}>
+                {`“${s.text}”`}
+                <button className="ghost tiny quote-op" title="not speech: put it back into the narration" onClick={() => absorb(s.id)}>not a quote</button>
+                {' '}
+              </span>
             ) : (
               <span key={s.id}>
-                <SpanText value={s.text} editing={editing === s.id} onEdit={() => setEditing(s.id)}
-                  onChange={(t) => setSpan(s.id, { text: t, by: 'user' })} onDone={() => setEditing(null)}
-                  onSelect={(start, end) => setPick(end > start ? { sid: s.id, start, end } : null)} />
-                {pick?.sid === s.id && (
-                  <button className="tiny" onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => makeQuote(s.id, pick.start, pick.end)}>make quote</button>
-                )}
+                <span className="narr" data-sid={s.id} title="select words that are speech to make them a quote">{s.text}</span>
+                {' '}
               </span>
             ))}
-          </div>
+          </p>
         ))}
       </div>
     </>
   )
 }
 
-// speaker dropdown (every known name) with "new name…" for a speaker not in the list yet
-function SpeakerPick({ names, value, onChange, className, title }: {
-  names: string[]; value: string; onChange: (v: string) => void; className: string; title?: string
-}) {
-  const [typing, setTyping] = useState(false)
-  const [draft, setDraft] = useState('')
-  if (typing) {
-    const done = () => { if (draft.trim()) onChange(draft.trim()); setTyping(false); setDraft('') }
-    return <input className={className} autoFocus value={draft} placeholder="new name"
-      onChange={(e) => setDraft(e.target.value)} onBlur={done}
-      onKeyDown={(e) => { if (e.key === 'Enter') done(); if (e.key === 'Escape') { setTyping(false); setDraft('') } }} />
-  }
-  const options = [...new Set([value, ...names])].sort((x, y) => x.localeCompare(y))
-  return (
-    <select className={className} title={title} value={value}
-      onChange={(e) => (e.target.value === '__new_name__' ? setTyping(true) : onChange(e.target.value))}>
-      {options.map((n) => <option key={n} value={n}>{n}</option>)}
-      <option value={'__new_name__'}>new name…</option>
-    </select>
-  )
-}
+// ---------------------------------------------------------------- 2. script: who speaks
 
-function SpanText({ value, editing, onEdit, onChange, onDone, onSelect, quote }: {
-  value: string; editing: boolean; onEdit: () => void; onChange: (t: string) => void; onDone: () => void
-  onSelect?: (start: number, end: number) => void   // narration: text selected with the mouse (offsets in value)
-  quote?: boolean
-}) {
-  if (editing)
-    return <textarea className="span-edit" autoFocus value={value} rows={Math.max(2, Math.ceil(value.length / 90))}
-      onChange={(e) => onChange(e.target.value)} onBlur={onDone} />
-  const selection = (el: HTMLElement): [number, number] | null => {
-    const sel = window.getSelection()
-    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null
-    const r = sel.getRangeAt(0)
-    if (r.startContainer !== r.endContainer || !el.contains(r.startContainer)) return null
-    return [Math.min(r.startOffset, value.length), Math.min(r.endOffset, value.length)]
-  }
-  return (
-    <span className={quote ? 'span q' : 'span'} title={onSelect ? 'click to edit, select words to mark them as a quote' : 'click to edit'}
-      onMouseUp={(e) => { if (onSelect) { const r = selection(e.currentTarget); onSelect(r ? r[0] : 0, r ? r[1] : 0) } }}
-      onClick={(e) => { if (!selection(e.currentTarget)) onEdit() }}>
-      {quote ? `“${value}”` : value}{' '}
-    </span>
-  )
-}
-
-// ---------------------------------------------------------------- 2. script
+// A line in the editor: the script line plus what it was when loaded (_o) and its speaker dispute (_d), carried on
+// the line itself so merging/splitting lines keeps them attached. Both are stripped before saving.
+type EditLine = Line & { _o?: { speaker: string; text: string; index: number }; _d?: Dispute }
+type EditScript = Omit<Script, 'lines'> & { lines: EditLine[] }
 
 function ScriptEditor({ id, novelId, narrated, setDirty, onSaved }: {
   id: number; novelId: number; narrated: number | null; setDirty: (d: boolean) => void; onSaved: () => void
 }) {
-  const [s, setS] = useState<Script | null>(null)
+  const [s, setS] = useState<EditScript | null>(null)
   const [orig, setOrig] = useState('')
   const [novelCast, setNovelCast] = useState<Character[]>([])
   const [voices, setVoices] = useState<Voice[]>([])
@@ -285,27 +242,33 @@ function ScriptEditor({ id, novelId, narrated, setDirty, onSaved }: {
   const [missing, setMissing] = useState(false)
   const [newName, setNewName] = useState('')
 
+  // script line n+1 is analysis span n (line 0 is the title): each dispute goes onto its line
+  const attach = (x: Script) => {
+    const byLine = new Map<number, Dispute>((x.review ?? []).map((r) => [r.id + 1, r]))
+    const y = { ...x, lines: x.lines.map((l, i) => ({ ...l, _o: { speaker: l.speaker, text: l.text, index: i }, _d: byLine.get(i) })) }
+    setS(y)
+    setOrig(JSON.stringify(y))
+  }
   useEffect(() => {
-    api.script(id).then((x) => { setS(x); setOrig(JSON.stringify(x)) }).catch(() => setMissing(true))
+    api.script(id).then(attach).catch(() => setMissing(true))
     api.cast(novelId).then(setNovelCast)
     api.voices().then((v) => setVoices(v.filter((x) => x.usable)))
   }, [id])
   const dirty = !!s && JSON.stringify(s) !== orig
   useEffect(() => setDirty(dirty), [dirty])
-  const origLines = useMemo(() => (orig ? (JSON.parse(orig) as Script).lines : []), [orig])
 
-  if (missing) return <p className="empty">No script yet. Run step 2.</p>
+  if (missing) return <p className="empty">No script yet. Run “Script”.</p>
   if (!s) return <p className="hint">Loading…</p>
   const speakers = [...new Set([...SPECIAL, ...Object.keys(s.cast), ...novelCast.map((c) => c.name)])]
-  const setLine = (i: number, p: Partial<Line>) => setS({ ...s, lines: s.lines.map((l, j) => (j === i ? { ...l, ...p } : l)) })
+  const setLines = (lines: EditLine[]) => setS({ ...s, lines })
+  const setLine = (i: number, p: Partial<EditLine>) => setLines(s.lines.map((l, j) => (j === i ? { ...l, ...p } : l)))
   const setCastEntry = (name: string, p: Partial<CastEntry>) => setS({ ...s, cast: { ...s.cast, [name]: { ...s.cast[name], ...p } } })
   const used = new Set(s.lines.map((l) => l.speaker))
-  // disputed lines (script line n+1 = analysis span n) still waiting for the user
-  const disputes = new Map<number, Dispute>((s.review ?? []).map((r) => [r.id + 1, r]))
-  const origSpeaker = (i: number) => origLines[i]?.speaker
+  // a disputed line still waiting for the user (not answered, speaker untouched)
   const open = (i: number) => {
-    const r = disputes.get(i)
-    return r && !r.resolved && !s.lines[i].confirmed && s.lines[i].speaker === origSpeaker(i) ? r : undefined
+    const l = s.lines[i]
+    const r = l?._d
+    return r && !r.resolved && !l.confirmed && l.kind === 'dialogue' && l.speaker === l._o?.speaker ? r : undefined
   }
   const openCount = { check: 0, likely: 0 }
   s.lines.forEach((_, i) => { const r = open(i); if (r) openCount[r.level ?? 'check']++ })
@@ -315,8 +278,6 @@ function ScriptEditor({ id, novelId, narrated, setDirty, onSaved }: {
       ? { ...s!.cast, [who]: { gender: 'male' as const, age: 'adult' as const, voice: '', aliases: [] } } : s!.cast
     setS({ ...s!, cast, lines: s!.lines.map((l, j) => (j === i ? { ...l, speaker: who, confirmed: true } : l)) })
   }
-
-
   function addCharacter() {
     const n = newName.trim()
     if (!n || s!.cast[n] || SPECIAL.includes(n)) return
@@ -330,9 +291,8 @@ function ScriptEditor({ id, novelId, narrated, setDirty, onSaved }: {
   }
   async function save() {
     try {
-      const saved = await api.saveScript(id, s!)
-      setS(saved)
-      setOrig(JSON.stringify(saved))
+      const plain = { ...s!, lines: s!.lines.map(({ _o, _d, ...l }) => l) }
+      attach(await api.saveScript(id, plain))
       setMsg(narrated ? 'Saved. Narrate again to hear the changes (unchanged lines are reused).' : 'Saved.')
       api.cast(novelId).then(setNovelCast)   // new characters got their voices
       onSaved()
@@ -358,17 +318,18 @@ function ScriptEditor({ id, novelId, narrated, setDirty, onSaved }: {
         <button className="ghost" disabled={!dirty} onClick={() => setS(JSON.parse(orig))}>Discard</button>
         <button disabled={!dirty} onClick={save}>Save</button>
       </div>
+      <p className="small muted">Pick who speaks each quote; your choices are kept when the script is made again. What counts as
+        a quote is set in the analysis (step 1).</p>
       {s.quality_issues.length > 0 && <div className="issues">{s.quality_issues.map((q) => <div key={q}>⚠ {q}</div>)}</div>}
       {!!s.review?.length && (
         <details className="review">
-          {/* script line n+1 is analysis span n (line 0 is the title) */}
           <summary>Speaker check: {s.review.length} disputed {s.review.length === 1 ? 'quote' : 'quotes'},{' '}
             {s.review.filter((r) => r.to !== r.from).length} changed</summary>
           {s.review.map((r) => (
             <div key={r.id} className="small">
               {r.to !== r.from ? <b>{r.from} → {r.to}</b> : <span>kept <b>{r.from}</b></span>}
-              <span className="muted"> (step 1: {r.from}, second reading: {r.blind})</span>
-              {' '}“{(s.lines[r.id + 1]?.text ?? '').slice(0, 80)}” <span className="muted">{r.evidence}</span>
+              <span className="muted"> (first reading: {r.from}, second reading: {r.blind})</span>
+              {' '}“{(s.lines.find((l) => l._d === r)?.text ?? '').slice(0, 80)}” <span className="muted">{r.evidence}</span>
             </div>
           ))}
         </details>
@@ -398,7 +359,7 @@ function ScriptEditor({ id, novelId, narrated, setDirty, onSaved }: {
                           <button key={g} className={e.gender === g ? 'on' : ''} disabled={e.gender === g}
                             onClick={() => setCastEntry(name, { gender: g })}>{g === 'female' ? 'F' : 'M'}</button>)}
                       </div></td>
-                      <td colSpan={3} className="small muted">a voice is picked when the script is saved or produced</td>
+                      <td colSpan={3} className="small muted">a voice is picked when the script is saved</td>
                     </>}
                 <td><input value={e.aliases.join(', ')} placeholder="comma-separated"
                   onChange={(ev) => setCastEntry(name, { aliases: ev.target.value.split(',').map((x) => x.trim()).filter(Boolean) })} /></td>
@@ -418,7 +379,7 @@ function ScriptEditor({ id, novelId, narrated, setDirty, onSaved }: {
       </details>
 
       <ReviewRuler selector=".line.uncertain"
-        version={`${s.lines.map((_, i) => (open(i) ? i : '')).join(',')}|${uncertainOnly}|${dialogueOnly}`} />
+        version={`${s.lines.map((_, i) => (open(i) ? i : '')).join(',')}|${s.lines.length}|${uncertainOnly}|${dialogueOnly}`} />
       <h3>Lines</h3>
       <div className="lines">
         {s.lines.map((l, i) => {
@@ -428,16 +389,19 @@ function ScriptEditor({ id, novelId, narrated, setDirty, onSaved }: {
           const context = uncertainOnly && !r && near(i)
           if ((dialogueOnly && l.kind !== 'dialogue' && !r) || (uncertainOnly && !r && !context)) return null
           const gap = uncertainOnly && i > 0 && !near(i - 1)   // a new passage starts here
+          const unchanged = l._o && l._o.text === l.text && l._o.speaker === l.speaker
           return (
           <div key={i} className={`line ${l.kind}${r ? ` uncertain ${r.level ?? 'check'}` : ''}${context ? ' context' : ''}${gap ? ' gap' : ''}`}
             data-level={r ? r.level ?? 'check' : undefined}>
-            <select className={`speaker ${l.speaker === 'Unknown' ? 'unknown' : ''}`} value={l.speaker}
-              onChange={(e) => setLine(i, { speaker: e.target.value })}>
-              {speakers.map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
-            <textarea value={l.text} rows={Math.max(1, Math.ceil(l.text.length / 95))} onChange={(e) => setLine(i, { text: e.target.value })} />
-            {narrated && origLines[i] && origLines[i].text === l.text && origLines[i].speaker === l.speaker
-              ? <LinePlay chapter={id} line={i} v={narrated} /> : <span className="play-slot" />}
+            {l.kind === 'dialogue'
+              ? <select className={`speaker ${l.speaker === 'Unknown' ? 'unknown' : ''}`} value={l.speaker}
+                  onChange={(e) => setLine(i, { speaker: e.target.value })}>
+                  {speakers.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              : <span className="speaker narr-label small muted">{l.kind === 'title' ? 'title' : 'narration'}</span>}
+            <textarea value={l.text} rows={Math.max(1, Math.ceil(l.text.length / 95))} onChange={(e) => setLine(i, { text: e.target.value })}
+              />
+            {narrated && unchanged ? <LinePlay chapter={id} line={l._o!.index} v={narrated} /> : <span className="play-slot" />}
             {r && (
               <div className="choices" title={r.evidence}>
                 <span className="small muted">{r.level === 'likely' ? 'probably fine:' : 'who speaks?'}</span>

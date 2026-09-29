@@ -12,6 +12,15 @@ Track a novel from a supported site (Royal Road is built in; more sites are decl
 
 Everything runs locally on Vulkan (NVIDIA, AMD, Intel); models download from their publishers on first start.
 
+## Use it from other devices
+
+The same UI works in any browser on your network:
+
+- **From the desktop app:** Settings → *Share on my network*, then open the address it shows (e.g. `http://192.168.0.11:8765`) on your phone, tablet or another computer.
+- **As a server without a window:** `fine-read-it --serve [--port 8765]` runs in the tray (Open in browser, Quit), always shared on that port.
+
+There is no password: anyone on your network can use it, so only share on a network you trust.
+
 ## Layout
 
 | folder | what |

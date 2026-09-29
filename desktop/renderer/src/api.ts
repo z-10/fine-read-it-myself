@@ -4,6 +4,7 @@ export type Novel = {
   id: number; source: string; url: string; title: string; author: string; cover: string; description: string
   narrator: string; director: string; added_at: number; checked_at: number | null; chapters?: number
 }
+// analyze: what is a quote (+ speaker detection); script: who speaks (+ speaker check, cast); narrate: audio
 export type Step = 'analyze' | 'script' | 'narrate'
 export type ActiveJob = { id: number; kind: Step; state: 'queued' | 'running'; stage: string; progress: number }
 export type Chapter = {
@@ -33,6 +34,7 @@ export type Job = {
 export type ProducerProfile = { name: string; base_url: string; api_key: string; model: string; json_schema: boolean }
 export type Settings = {
   default_director: string; directors: ProducerProfile[]; check_interval_hours: number; mp3_bitrate: string
+  share_network: boolean; share_port: number   // serve the UI to other devices on the network (no password)
 }
 
 // the voice catalog (tested voices on the Hugging Face hub); installed = in the bundle or downloaded
@@ -43,6 +45,8 @@ export type CatalogVoice = {
 // removing a voice that is in use first returns who uses it (users); with force it re-casts them
 export type VoiceRemoval = { removed?: string; deleted?: boolean; recast?: string[]; users?: string[] }
 export type VoiceDownload = { running: boolean; done: number; total: number; current: string; error: string; log: string[] }
+// network sharing: urls are what other devices open; forced = started with --serve (Settings can't turn it off)
+export type ShareState = { enabled: boolean; running: boolean; port: number; urls: string[]; error: string; forced: boolean }
 export type Status = { warnings: string[]; voices: number; queue: number }
 export type SetupItem = { id: string; title: string; license: string; size: number; installed: boolean; group: string }
 export type SetupState = {
@@ -118,6 +122,7 @@ export const api = {
   voiceCatalog: () => req<{ url: string; voices: CatalogVoice[]; error: string; download: VoiceDownload }>('GET', '/voices/catalog'),
   downloadVoices: (ids: string[]) => req<VoiceDownload>('POST', '/voices/download', { ids }),
   voiceDownload: () => req<VoiceDownload>('GET', '/voices/download'),
+  share: () => req<ShareState>('GET', '/share'),
   removeVoice: async (id: string, force = false): Promise<VoiceRemoval> => {
     const r = await fetch(`./api/voices/${enc(id)}${force ? '?force=1' : ''}`, { method: 'DELETE' })
     if (r.status === 409) return { users: (await r.json()).users }
@@ -140,7 +145,8 @@ export const sampleUrl = (voiceId: string) => `./api/voices/${voiceId}/sample`
 // step state of a chapter for badges and buttons
 export type StepState = 'none' | 'done' | 'outdated' | 'queued' | 'running'
 export function stepState(c: Chapter, step: Step): StepState {
-  const job = c.jobs.find((j) => j.kind === step)
+  // a "prepare" job (analyze + script in one) counts for both
+  const job = c.jobs.find((j) => j.kind === step || ((j.kind as string) === 'prepare' && step !== 'narrate'))
   if (job) return job.state
   if (step === 'analyze') return c.analyzed_at ? 'done' : 'none'
   if (step === 'script') {

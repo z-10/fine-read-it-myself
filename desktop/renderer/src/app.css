@@ -136,7 +136,7 @@ details.cast-section[open] > summary::before { content: '▾ '; }
 .line.gap { margin-top: 18px; }
 
 /* overview ruler of things to review, beside the page scrollbar */
-.ruler { position: fixed; top: 0; right: 0; width: 12px; height: 100vh; z-index: 20; pointer-events: none;
+.ruler { position: fixed; top: 0; right: 0; width: 12px; z-index: 20; pointer-events: none;
   background: color-mix(in srgb, var(--line) 35%, transparent); }
 .ruler .mark { position: absolute; left: 1px; right: 1px; min-height: 3px; padding: 0; border: 0; border-radius: 1px;
   pointer-events: auto; cursor: pointer; background: #e0a100; }
@@ -146,3 +146,27 @@ details.cast-section[open] > summary::before { content: '▾ '; }
   padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); box-shadow: 0 2px 8px rgb(0 0 0 / 0.15); }
 @keyframes flash { from { background: color-mix(in srgb, #e0a100 35%, transparent); } to { background: transparent; } }
 .flash { animation: flash 1.2s ease-out; border-radius: 6px; }
+button.keep { flex: none; }
+@media (pointer: coarse) {   /* phones and tablets: bigger touch targets, nav above the home bar */
+  .ruler { width: 16px; }
+  .ruler .mark { min-height: 6px; }
+  .review-nav { bottom: max(18px, env(safe-area-inset-bottom)); }
+}
+.line .narr-label { display: inline-block; width: 150px; flex: none; padding-top: 7px; font-size: 12px; }
+.line .line-op { flex: none; align-self: center; }
+.line .line-op.ghost { opacity: 0; }
+.line:hover .line-op.ghost, .line .line-op.ghost:focus { opacity: 1; }
+@media (pointer: coarse) { .line .line-op.ghost { opacity: 1; } }   /* no hover on touch screens */
+/* analysis: the chapter as it reads, quotes highlighted */
+.doc.reading { max-width: 820px; line-height: 1.75; font-size: 16px; }
+.doc.reading .para { margin: 0 0 14px; }
+.doc.reading .quote { background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 4px; padding: 1px 2px; }
+.doc.reading .quote { position: relative; }
+/* the button floats above the quote on hover, taking no room in the text */
+.doc.reading .quote .quote-op { display: none; position: absolute; left: 0; bottom: 100%; z-index: 5; white-space: nowrap;
+  background: var(--card); box-shadow: 0 1px 4px rgb(0 0 0 / 0.15); }
+.doc.reading .quote:hover .quote-op, .doc.reading .quote .quote-op:focus { display: inline-block; }
+@media (pointer: coarse) {   /* no hover on touch screens: tap a quote to show its button */
+  .doc.reading .quote:focus-within .quote-op, .doc.reading .quote:active .quote-op { display: inline-block; }
+}
+.make-float { position: absolute; z-index: 30; box-shadow: 0 2px 8px rgb(0 0 0 / 0.2); }

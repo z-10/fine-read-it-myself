@@ -23,6 +23,8 @@
 
 #include <atomic>
 #include <fstream>
+#include <functional>
+#include <condition_variable>
 #include <iostream>
 #include <mutex>
 #include <set>
@@ -57,6 +59,10 @@ struct App {
         return settings;
     }
     Pool pool() const { return Pool(deploy.pool_dirs(), deploy.voice_overrides()); }
+    // network sharing (see NetworkShare): forced on by --share-port (headless mode), else Settings
+    std::optional<int> forced_share_port;
+    std::function<void()> share_refresh;
+    std::function<json()> share_state;
 };
 
 void reply(httplib::Response & res, const json & j, int status = 200) {
@@ -206,9 +212,12 @@ void routes(httplib::Server & svr, App & app) {
     auto steps_of = [](const json & b) {
         std::vector<std::string> kinds;
         for (const auto & k : b.value("steps", json::array())) {
-            const std::string s2 = k.get<std::string>();
-            if (std::find(kStepKinds.begin(), kStepKinds.end(), s2) == kStepKinds.end()) throw HttpError{400, "unknown step: " + s2};
-            kinds.push_back(s2);
+            std::string s2 = k.get<std::string>();
+            const std::vector<std::string> want = s2 == "prepare" ? std::vector<std::string>{"analyze", "script"} : std::vector<std::string>{s2};
+            for (const auto & w : want) {
+                if (std::find(kStepKinds.begin(), kStepKinds.end(), w) == kStepKinds.end()) throw HttpError{400, "unknown step: " + w};
+                if (std::find(kinds.begin(), kinds.end(), w) == kinds.end()) kinds.push_back(w);
+            }
         }
         if (kinds.empty()) throw HttpError{400, "no steps given (analyze, script, narrate)"};
         return kinds;
@@ -450,6 +459,10 @@ void routes(httplib::Server & svr, App & app) {
         reply(res, app.voice_catalog->state());
     }));
 
+    svr.Get("/api/share", H([&](const httplib::Request &, httplib::Response & res) {
+        reply(res, app.share_state ? app.share_state() : json::object());
+    }));
+
     svr.Get("/api/jobs", H([&](const httplib::Request & req, httplib::Response & res) {
         const int limit = req.has_param("limit") ? std::stoi(req.get_param_value("limit")) : 50;
         reply(res, app.db->all("SELECT j.*, c.title AS chapter_title, c.novel_id, c.position FROM jobs j "
@@ -490,16 +503,152 @@ void routes(httplib::Server & svr, App & app) {
             throw HttpError{400, "default producer: " + why};
         app.settings = next;
         save_settings(app.deploy, app.settings);
+        if (app.share_refresh) app.share_refresh();
         reply(res, app.settings.to_json(true));
     }));
 }
 
 }  // namespace
 
+// the UI (renderer/dist) at "/", single-page app: unknown non-API paths get index.html
+void mount_web(httplib::Server & svr, const std::optional<fs::path> & web) {
+    if (!web || !fs::is_directory(*web)) return;
+    // browsers must check with the server before reusing a cached page (unchanged files cost a 304), so an
+    // updated UI shows up on the next load instead of whenever the browser's own cache heuristic expires
+    svr.set_mount_point("/", web->u8string(), {{"Cache-Control", "no-cache"}});
+    const fs::path index = *web / "index.html";
+    svr.set_error_handler([index](const httplib::Request & req, httplib::Response & res) {
+        if (res.status == 404 && req.path.rfind("/api/", 0) != 0 && fs::exists(index)) {
+            res.status = 200;
+            res.set_header("Cache-Control", "no-cache");
+            res.set_content(read_file(index), "text/html");
+        }
+    });
+}
+
+// this computer's address on the local network: the interface a packet to the internet would leave from
+// (a UDP "connect" sends nothing)
+std::string lan_address() {
+    std::string out;
+#ifdef _WIN32
+    SOCKET sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock == INVALID_SOCKET) return out;
+#else
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) return out;
+#endif
+    sockaddr_in to{};
+    to.sin_family = AF_INET;
+    to.sin_port = htons(80);
+    inet_pton(AF_INET, "192.0.2.1", &to.sin_addr);
+    if (connect(sock, reinterpret_cast<sockaddr *>(&to), sizeof to) == 0) {
+        sockaddr_in me{};
+        socklen_t len = sizeof me;
+        char buf[INET_ADDRSTRLEN] = {};
+        if (getsockname(sock, reinterpret_cast<sockaddr *>(&me), &len) == 0 && inet_ntop(AF_INET, &me.sin_addr, buf, sizeof buf))
+            out = buf;
+    }
+#ifdef _WIN32
+    closesocket(sock);
+#else
+    close(sock);
+#endif
+    return out;
+}
+
+// Shares the UI + API with other devices: a second listener on all interfaces (the desktop window keeps its
+// private 127.0.0.1 one). A manager thread starts/stops it to match the settings, so switching it off from a
+// browser connected through it doesn't stop the server from inside its own request.
+class NetworkShare {
+public:
+    NetworkShare(App & app, std::optional<fs::path> web) : app_(app), web_(std::move(web)), manager_([this] { loop(); }) {}
+    ~NetworkShare() {
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            quit_ = true;
+        }
+        cv_.notify_all();
+        manager_.join();
+    }
+    void refresh() {
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            dirty_ = true;
+        }
+        cv_.notify_all();
+    }
+    json state() {
+        std::lock_guard<std::mutex> lk(mu_);
+        json urls = json::array();
+        if (running_) {
+            if (const std::string ip = lan_address(); !ip.empty()) urls.push_back("http://" + ip + ":" + std::to_string(port_));
+            char host[256] = {};
+            if (gethostname(host, sizeof host) == 0 && host[0]) urls.push_back("http://" + std::string(host) + ":" + std::to_string(port_));
+        }
+        return {{"enabled", want_}, {"running", running_}, {"port", port_}, {"urls", urls}, {"error", error_},
+                {"forced", app_.forced_share_port.has_value()}};
+    }
+
+private:
+    void loop() {
+        std::unique_lock<std::mutex> lk(mu_);
+        while (!quit_) {
+            cv_.wait(lk, [this] { return dirty_ || quit_; });
+            if (quit_) break;
+            dirty_ = false;
+            const Settings s = app_.get_settings();
+            const bool want = app_.forced_share_port.has_value() || s.share_network;
+            const int port = app_.forced_share_port.value_or(s.share_port);
+            want_ = want;
+            if (running_ && (!want || port != port_)) {   // off, or another port: stop the current listener
+                srv_->stop();
+                lk.unlock();
+                thread_.join();
+                lk.lock();
+                srv_.reset();
+                running_ = false;
+            }
+            if (want && !running_) {
+                auto srv = std::make_unique<httplib::Server>();
+                routes(*srv, app_);
+                mount_web(*srv, web_);
+                port_ = port;
+                if (!srv->bind_to_port("0.0.0.0", port)) {
+                    error_ = "port " + std::to_string(port) + " is in use or not allowed";
+                    continue;
+                }
+                error_.clear();
+                srv_ = std::move(srv);
+                thread_ = std::thread([srv = srv_.get()] { srv->listen_after_bind(); });
+                running_ = true;
+                std::cerr << "sharing on the network: port " << port << std::endl;
+            }
+            if (!want) error_.clear();
+        }
+        if (running_) {
+            srv_->stop();
+            lk.unlock();
+            thread_.join();
+        }
+    }
+
+    App & app_;
+    std::optional<fs::path> web_;
+    std::mutex mu_;
+    std::condition_variable cv_;
+    bool dirty_ = true, quit_ = false, want_ = false, running_ = false;
+    int port_ = 0;
+    std::string error_;
+    std::unique_ptr<httplib::Server> srv_;
+    std::thread thread_;
+    std::thread manager_;
+};
+
 int main(int argc, char ** argv) {
     std::string host = "127.0.0.1";
     int port = 8765;
     std::optional<fs::path> data, models, web, voices;
+    std::optional<int> share_port;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string k = argv[i], v = argv[i + 1];
         if (k == "--host") host = v;
@@ -508,6 +657,7 @@ int main(int argc, char ** argv) {
         else if (k == "--models") models = fs::u8path(v);
         else if (k == "--web") web = fs::u8path(v);
         else if (k == "--voices") voices = fs::u8path(v);
+        else if (k == "--share-port") share_port = std::stoi(v);   // headless mode: share on the network regardless of Settings
     }
     if (argc >= 4 && std::string(argv[1]) == "--convert-booknlp") {   // first-run model conversion (desktop setup)
         try {
@@ -641,17 +791,11 @@ int main(int argc, char ** argv) {
 
         httplib::Server svr;
         routes(svr, app);
-        if (web && fs::is_directory(*web)) {
-            svr.set_mount_point("/", web->u8string());
-            const fs::path index = *web / "index.html";
-            svr.set_error_handler([index](const httplib::Request & req, httplib::Response & res) {
-                // single-page app: unknown non-API paths get index.html
-                if (res.status == 404 && req.path.rfind("/api/", 0) != 0 && fs::exists(index)) {
-                    res.status = 200;
-                    res.set_content(read_file(index), "text/html");
-                }
-            });
-        }
+        mount_web(svr, web);
+        app.forced_share_port = share_port;
+        NetworkShare share(app, web);
+        app.share_refresh = [&share] { share.refresh(); };
+        app.share_state = [&share] { return share.state(); };
         std::cerr << "readmyself-server on http://" << host << ":" << port << " (data " << app.deploy.data_dir.u8string() << ")" << std::endl;
         if (!svr.listen(host, port)) {
             std::cerr << "cannot listen on " << host << ":" << port << std::endl;

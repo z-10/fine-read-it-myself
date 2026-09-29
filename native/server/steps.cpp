@@ -91,12 +91,29 @@ void Steps::analyze(int64_t cid, const StepLog & log) {
         }
         js.push_back(o);
     }
+    // preparing again: speakers the user set before stay on quotes with the same text in the same paragraph
+    if (fs::exists(analysis_path(cid))) {
+        std::map<std::pair<int, std::string>, std::string> mine;
+        for (const auto & o : read_json_file(analysis_path(cid)).value("spans", json::array()))
+            if (o.value("kind", "") == "dialogue" && o.value("by", "") == "user")
+                mine[{o["para"].get<int>(), o["text"].get<std::string>()}] = o.value("speaker", "Unknown");
+        int kept = 0;
+        for (auto & o : js) {
+            if (o["kind"] != "dialogue") continue;
+            auto it = mine.find({o["para"].get<int>(), o["text"].get<std::string>()});
+            if (it == mine.end()) continue;
+            o["speaker"] = it->second;
+            o["by"] = "user";
+            ++kept;
+        }
+        if (kept) log("kept " + std::to_string(kept) + " speakers you set", "analyze", 0.95);
+    }
     // quotes the detection is unsure about: the producer's speaker review (or the user) resolves them
     std::map<int, std::set<std::string>> para_speakers;
     for (const auto & o : js)
         if (o["kind"] == "dialogue") para_speakers[o["para"].get<int>()].insert(o["speaker"].get<std::string>());
     for (auto & o : js) {
-        if (o["kind"] != "dialogue") continue;
+        if (o["kind"] != "dialogue" || o.value("by", "") == "user") continue;
         if (o["speaker"] == "Unknown") o["check"] = "no speaker detected";
         else if (para_speakers[o["para"].get<int>()].size() > 1) o["check"] = "different speakers in one paragraph";
     }
@@ -289,6 +306,52 @@ void Steps::save_script(int64_t cid, const json & sc) {
                 span.erase("check");
                 analysis_changed = true;
             }
+        }
+    }
+    // the user merged ("not a quote") or split ("make quote") lines: rebuild the analysis spans from the lines, so
+    // line n+1 stays span n. Unchanged spans keep their flags; changed or new ones are the user's; disputes follow
+    // their line, or go when their line is gone.
+    const bool restructured = !mapped && analysis.is_object() && analysis.contains("spans") &&
+                              old_lines.size() == analysis["spans"].size() + 1 && sc["lines"].size() != old_lines.size();
+    if (restructured) {
+        std::vector<bool> used(analysis["spans"].size(), false);
+        std::map<int, int> new_of_old;   // span id: before -> after
+        json spans = json::array();
+        for (size_t i = 1; i < sc["lines"].size(); ++i) {
+            const json & l = sc["lines"][i];
+            const std::string kind = l.value("kind", "") == "dialogue" ? "dialogue" : "narration";
+            json span;
+            for (size_t k = 0; k < analysis["spans"].size(); ++k) {
+                const json & o = analysis["spans"][k];
+                if (used[k] || o.value("kind", "") != kind || o["text"] != l["text"] || o["para"] != l.value("para", o["para"])) continue;
+                used[k] = true;
+                span = o;
+                new_of_old[static_cast<int>(k)] = static_cast<int>(spans.size());
+                if (kind == "dialogue" && span.value("speaker", "") != l["speaker"]) {
+                    span["speaker"] = l["speaker"];
+                    span["by"] = "user";
+                    span.erase("check");
+                }
+                break;
+            }
+            if (span.is_null()) {
+                span = {{"para", l.value("para", 0)}, {"kind", kind}, {"text", l["text"]}, {"by", "user"}};
+                if (kind == "dialogue") span["speaker"] = l["speaker"];
+            }
+            span["id"] = static_cast<int>(spans.size());
+            spans.push_back(span);
+        }
+        analysis["spans"] = spans;
+        analysis_changed = true;
+        if (out.contains("review")) {
+            json review = json::array();
+            for (auto r : out["review"]) {
+                auto it = new_of_old.find(r["id"].get<int>());
+                if (it == new_of_old.end()) continue;   // its line was merged away
+                r["id"] = it->second;
+                review.push_back(r);
+            }
+            out["review"] = review;
         }
     }
     if (analysis_changed) write_json_file(analysis_path(cid), analysis);   // mirrored in the script: step 1 stays up to date

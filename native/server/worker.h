@@ -15,6 +15,8 @@
 
 namespace rm {
 
+// analyze: narration/quote split + speaker detection (the user fixes what is a quote); script: speaker check +
+// cast (the user fixes who speaks); narrate. "prepare" (analyze + script in one job) is still accepted.
 inline const std::vector<std::string> kStepKinds = {"analyze", "script", "narrate"};
 
 class Worker {

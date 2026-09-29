@@ -88,6 +88,7 @@ export function ReviewRuler({ selector, version }: { selector: string; version: 
   type Mark = { top: number; height: number; level: string }
   const [marks, setMarks] = useState<Mark[]>([])
   const [at, setAt] = useState(0)   // marks above the middle of the window
+  const [viewH, setViewH] = useState(innerHeight)
   const items = () => [...document.querySelectorAll<HTMLElement>(selector)]
   const measure = () => {
     const H = Math.max(1, document.documentElement.scrollHeight)
@@ -95,6 +96,8 @@ export function ReviewRuler({ selector, version }: { selector: string; version: 
       const r = e.getBoundingClientRect()
       return { top: ((r.top + scrollY) / H) * 100, height: Math.max(0.35, (r.height / H) * 100), level: e.dataset.level ?? 'check' }
     }))
+    // the strip spans exactly what is visible (phones: the browser bars come and go)
+    setViewH(window.visualViewport?.height ?? innerHeight)
     const mid = scrollY + innerHeight / 2
     setAt(items().filter((e) => e.getBoundingClientRect().top + scrollY + 1 < mid).length)
   }
@@ -103,7 +106,12 @@ export function ReviewRuler({ selector, version }: { selector: string; version: 
     const ro = new ResizeObserver(measure)
     ro.observe(document.body)
     addEventListener('scroll', measure, { passive: true })
-    return () => { ro.disconnect(); removeEventListener('scroll', measure) }
+    addEventListener('resize', measure)
+    window.visualViewport?.addEventListener('resize', measure)
+    return () => {
+      ro.disconnect(); removeEventListener('scroll', measure); removeEventListener('resize', measure)
+      window.visualViewport?.removeEventListener('resize', measure)
+    }
   }, [version])
   const show = (e: HTMLElement | undefined) => {
     if (!e) return
@@ -129,7 +137,7 @@ export function ReviewRuler({ selector, version }: { selector: string; version: 
   if (!marks.length) return null
   return (
     <>
-      <div className="ruler" aria-hidden>
+      <div className="ruler" aria-hidden style={{ height: viewH }}>
         {marks.map((m, i) => (
           <button key={i} className={`mark ${m.level}`} style={{ top: `${m.top}%`, height: `${m.height}%` }}
             onClick={() => show(items()[i])} title={`${i + 1} of ${marks.length}`} />

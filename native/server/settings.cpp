@@ -32,7 +32,9 @@ json Settings::to_json(bool mask_keys) const {
             {"user_sources_dir", user_sources_dir ? json(user_sources_dir->u8string()) : json(nullptr)},
             {"check_interval_hours", check_interval_hours},
             {"mp3_bitrate", mp3_bitrate},
-            {"voice_catalog", voice_catalog}};
+            {"voice_catalog", voice_catalog},
+            {"share_network", share_network},
+            {"share_port", share_port}};
 }
 
 Settings Settings::from_json(const json & j) {
@@ -52,6 +54,11 @@ Settings Settings::from_json(const json & j) {
         if (j.contains("user_sources_dir") && !j["user_sources_dir"].is_null())
             s.user_sources_dir = fs::u8path(j["user_sources_dir"].get<std::string>());
         if (j.contains("check_interval_hours")) s.check_interval_hours = j["check_interval_hours"].get<double>();
+        if (j.contains("share_network")) s.share_network = j["share_network"].get<bool>();
+        if (j.contains("share_port")) {
+            s.share_port = j["share_port"].get<int>();
+            if (s.share_port < 1024 || s.share_port > 65535) throw std::invalid_argument("share_port must be 1024-65535");
+        }
         if (j.contains("mp3_bitrate")) {   // MPEG-1 layer III rates (the narration is 48 kHz mono)
             s.mp3_bitrate = j["mp3_bitrate"].get<std::string>();
             static const int kRates[] = {32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320};
