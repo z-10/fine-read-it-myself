@@ -1,0 +1,57 @@
+{
+  "name": "fine-ill-read-it-myself",
+  "productName": "Fine, I'll read it myself!",
+  "version": "0.2.0",
+  "license": "MIT",
+  "description": "Track web novels and turn them into narrated audiobooks, locally",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "build:renderer": "npm --prefix renderer run build",
+    "dist": "npm run build:renderer && electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^39.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "local.fine-ill-read-it-myself",
+    "files": [
+      "main.js"
+    ],
+    "extraResources": [
+      {
+        "from": "renderer/dist",
+        "to": "web"
+      },
+      {
+        "from": "../native/build/bundle/bin",
+        "to": "bin"
+      },
+      {
+        "from": "voices",
+        "to": "voices"
+      },
+      {
+        "from": "../native/NOTICE",
+        "to": "NOTICE.txt"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "directories": {
+      "output": "dist"
+    },
+    "asar": true,
+    "executableName": "fine-read-it"
+  },
+  "author": "readmyself"
+}

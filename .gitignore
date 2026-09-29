@@ -1,0 +1,25 @@
+.venv/
+.devdata/
+.devdata-*
+data/
+__pycache__/
+*.pyc
+*.egg-info/
+web/node_modules/
+web/dist/
+*.log
+desktop/node_modules/
+desktop/dist/
+native/build/
+desktop/renderer/node_modules/
+desktop/renderer/dist/
+desktop/voices/
+
+# the earlier Python service is not part of this repo (kept locally)
+server/
+web/
+docker/
+tests/
+scripts/
+pyproject.toml
+.dockerignore

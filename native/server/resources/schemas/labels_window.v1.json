@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://readmyself.local/schemas/labels_window.v1.json",
+  "title": "LLM labelling-window response v1 (FROZEN). Span id and speaker enums are narrowed per request.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["labels"],
+  "properties": {
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "speaker"],
+        "properties": {
+          "id": { "type": "integer", "minimum": 0 },
+          "speaker": { "type": "string", "minLength": 1, "maxLength": 40 }
+        }
+      }
+    }
+  }
+}

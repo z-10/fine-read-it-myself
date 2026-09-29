@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://readmyself.local/schemas/cast_pass.v1.json",
+  "title": "LLM cast pass response v1 (FROZEN)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["cast"],
+  "properties": {
+    "cast": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "gender", "age", "voice", "aliases"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 40 },
+          "gender": { "enum": ["male", "female"] },
+          "age": { "enum": ["child", "teen", "adult", "elder"] },
+          "voice": { "type": "string", "maxLength": 80 },
+          "aliases": { "type": "array", "maxItems": 5, "items": { "type": "string", "minLength": 1, "maxLength": 40 } }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,48 @@
+# Fully-automatic pub.dev release: when bindings/dart/pubspec.yaml's version
+# changes on main, cut the matching `glint_audio-v<version>` tag, which triggers
+# publish-glint_audio.yml (OIDC → pub.dev). So a version bump merged to main
+# publishes itself — no manual tagging.
+#
+# The tag push must use a PAT (not GITHUB_TOKEN): GitHub deliberately does NOT
+# let a GITHUB_TOKEN-created tag trigger another workflow. Set repo secret
+# PUBLISH_PAT = a fine-grained PAT with `contents: write`. Without it, this job
+# SKIPS (the manual `git tag glint_audio-vX.Y.Z && git push` flow still works).
+name: Auto-tag glint_audio on version bump
+on:
+  push:
+    branches: [main]
+    paths: ['bindings/dart/pubspec.yaml']
+
+jobs:
+  autotag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PUBLISH_PAT || github.token }}
+      - id: ver
+        run: |
+          V=$(awk '/^version:/{print $2; exit}' bindings/dart/pubspec.yaml)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "glint_audio version on main: $V"
+      - name: Cut the release tag (idempotent)
+        env:
+          HAVE_PAT: ${{ secrets.PUBLISH_PAT != '' }}
+        run: |
+          TAG="glint_audio-v${{ steps.ver.outputs.version }}"
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+            echo "$TAG already exists on origin — nothing to do."
+            exit 0
+          fi
+          if [ "$HAVE_PAT" != "true" ]; then
+            echo "::warning::PUBLISH_PAT not set — skipping auto-tag. Publish by"
+            echo "::warning::pushing $TAG manually (a GITHUB_TOKEN tag would not"
+            echo "::warning::trigger the publish workflow)."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "Cut $TAG → publish-glint_audio.yml will now publish to pub.dev."

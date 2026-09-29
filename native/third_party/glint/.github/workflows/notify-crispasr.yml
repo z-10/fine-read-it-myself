@@ -1,0 +1,29 @@
+name: Notify CrispASR
+
+# Tells CrispASR that glint main moved so its sync-glint workflow can
+# pull the new committed state into its in-tree glint/ copy immediately.
+# Needs a CRISPASR_SYNC_PAT repo secret (fine-grained PAT with
+# Contents: read/write on CrispStrobe/CrispASR). Without it this is a
+# no-op — CrispASR's daily scheduled sync picks the change up instead.
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: repository_dispatch → CrispStrobe/CrispASR
+        env:
+          TOKEN: ${{ secrets.CRISPASR_SYNC_PAT }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::notice::CRISPASR_SYNC_PAT not set — relying on CrispASR's daily scheduled sync"
+            exit 0
+          fi
+          curl -sf -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/CrispStrobe/CrispASR/dispatches \
+            -d "{\"event_type\":\"glint-push\",\"client_payload\":{\"sha\":\"$GITHUB_SHA\"}}"

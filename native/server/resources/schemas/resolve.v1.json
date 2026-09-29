@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://readmyself.local/schemas/resolve.v1.json",
+  "title": "LLM speaker disagreement resolution v1. The answer enum is narrowed per request.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tag", "reason", "answer"],
+  "properties": {
+    "tag": { "type": "string", "maxLength": 120 },
+    "reason": { "type": "string", "maxLength": 300 },
+    "answer": { "type": "string" }
+  }
+}

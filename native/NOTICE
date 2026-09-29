@@ -1,0 +1,23 @@
+readmyself native engine — third-party code
+
+third_party/ggml        ggml, as vendored by audio.cpp (external/ggml, audio.cpp commit 77491a33), MIT License.
+                        Only the CPU, Vulkan and Metal backends are kept. See third_party/ggml/LICENSE.
+audio/                  Subset of audio.cpp (https://github.com/0xShug0/audio.cpp, commit 77491a33):
+                        the VoxCPM2 model and the framework code it uses, at their original paths.
+                        Copyright 2026 ShugoAI LLC, Apache License 2.0. See audio/LICENSE.
+third_party/cjson       cJSON, MIT License. See third_party/cjson/LICENSE.
+third_party/libyaml     libyaml 0.2.5, MIT License. See third_party/libyaml/License.
+llm/                    Subset of llama.cpp (https://github.com/ggml-org/llama.cpp, commit 60499061, 2026-05-16,
+                        the upstream ggml that audio.cpp's fork is based on): libllama (all model architectures)
+                        and common/json-schema-to-grammar. MIT License. See llm/LICENSE.
+third_party/nlohmann    nlohmann/json 3.12.0 (as vendored by llama.cpp), MIT License.
+booknlp/                C++ port of ModernBookNLP (https://github.com/gasmichel/ModernBookNLP, MIT) and BookNLP
+                        (https://github.com/booknlp/booknlp, MIT); embeds BookNLP's aliases.txt and
+                        gutenberg_prop_gender_terms.txt in the converted model files.
+booknlp/src/spacy_en_*  Tokenizer data exported from spaCy 3.8 / en_core_web_sm (MIT, Explosion AI).
+third_party/httplib     cpp-httplib (https://github.com/yhirose/cpp-httplib), MIT License.
+third_party/lexbor      lexbor HTML/CSS (https://github.com/lexbor/lexbor), Apache License 2.0. See its LICENSE/NOTICE.
+third_party/glint       glint MP3 encoder (https://github.com/CrispStrobe/glint), MIT License.
+third_party/sqlite      SQLite 3.53.4 amalgamation, public domain.
+third_party/miniz       miniz (https://github.com/richgel999/miniz), MIT License.
+OpenSSL                 linked statically, Apache License 2.0 (https://www.openssl.org).

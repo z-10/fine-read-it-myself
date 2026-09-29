@@ -1,0 +1,32 @@
+# Source definition: how to read a web novel site.
+# Selectors are CSS (BeautifulSoup/soupsieve). "@attr" reads an attribute instead of text.
+id: royalroad
+name: Royal Road
+homepage: https://www.royalroad.com
+
+# A pasted URL matches if any pattern matches; named groups become template variables.
+match:
+  - '^https?://(www\.)?royalroad\.com/fiction/(?P<novel_id>\d+)(/(?P<slug>[^/?#]+))?'
+
+novel:
+  url: 'https://www.royalroad.com/fiction/{novel_id}'
+  title: 'div.fic-title h1'
+  author: 'div.fic-title h4 a'
+  cover: 'img.thumbnail@src'
+  description: 'div.description'
+  chapters:
+    item: 'table#chapters tr.chapter-row'
+    url: '@data-url'            # attribute of the item itself
+    title: 'td:first-child a'
+    published: 'time@unixtime'  # unix seconds
+
+chapter:
+  title: 'h1'
+  content: 'div.chapter-content'
+  # Royal Road injects "stolen content" paragraphs hidden via a CSS class; drop any element whose
+  # class is declared display:none in the page's <style> blocks.
+  drop_css_hidden: true
+  drop: ['.author-note-portlet', 'script', 'style']
+
+fetch:
+  delay_seconds: 1.5            # politeness delay between requests to this site

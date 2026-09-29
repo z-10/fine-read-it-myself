@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://readmyself.local/schemas/label.v1.json",
+  "title": "LLM blind speaker labels v1. The id enum and item counts are narrowed per request.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["answers"],
+  "properties": {
+    "answers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "speaker"],
+        "properties": {
+          "id": { "type": "integer", "minimum": 0 },
+          "speaker": { "type": "string", "minLength": 1, "maxLength": 60 }
+        }
+      }
+    }
+  }
+}

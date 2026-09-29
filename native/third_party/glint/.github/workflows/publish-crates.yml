@@ -1,0 +1,70 @@
+# Publish the Rust bindings to crates.io on a `rust-v<version>` tag.
+#
+# Auth is crates.io Trusted Publishing (GitHub OIDC) — no CARGO_REGISTRY_TOKEN
+# secret is stored anywhere. Same posture as the pub.dev workflows: the job runs
+# in a rule-less `crates.io` environment so the OIDC claim is scoped to it and a
+# stray tag push or a PR workflow with id-token:write cannot publish.
+#
+# One-time setup by the crate owner, on crates.io -> each crate -> Settings ->
+# Trusted Publishing: add repository CrispStrobe/glint, workflow
+# publish-crates.yml, environment crates.io. Do this for BOTH crates before the
+# first tagged run, and note that the very first version of a crate cannot be
+# published this way — crates.io requires an owner to publish v1 of a new crate
+# name with a token first (see PLAN.md).
+name: Publish Rust crates to crates.io
+
+on:
+  push:
+    tags: ['rust-v[0-9]+.[0-9]+.[0-9]+']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: crates.io
+    permissions:
+      id-token: write   # OIDC auth to crates.io (no stored secrets)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # cargo only packages files under the crate root, so the C++ sources the
+      # in-tree build reads from ../../../src must be copied in first.
+      - name: Vendor the C++ sources into glint-audio-sys
+        run: tools/vendor_rust_sources.sh
+
+      - name: Check the tag matches the crate versions
+        run: |
+          TAG="${GITHUB_REF_NAME#rust-v}"
+          for c in glint-sys glint; do
+            V=$(awk '/^version *=/{gsub(/[" ]/,""); sub(/^version=/,""); print; exit}' \
+                "bindings/rust/$c/Cargo.toml")
+            if [ "$V" != "$TAG" ]; then
+              echo "::error::bindings/rust/$c is version $V but the tag says $TAG"
+              exit 1
+            fi
+          done
+          echo "both crates are at $TAG"
+
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      # The wrapper depends on the -sys crate, so -sys goes first. cargo blocks
+      # until the new version is visible in the index before returning, so the
+      # second publish resolves it.
+      # --allow-dirty: the vendored tree is gitignored but IS packaged (the
+      # `include` list overrides .gitignore), and cargo counts packaged files
+      # that git does not track as uncommitted changes. Everything that is not
+      # generated is committed; vendor/ is reproduced from tracked sources by
+      # the step above.
+      - name: Publish glint-audio-sys
+        working-directory: bindings/rust/glint-sys
+        run: cargo publish --allow-dirty
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+      - name: Publish glint-audio
+        working-directory: bindings/rust/glint
+        run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

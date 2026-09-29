@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        mode: [double, fixed, both]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg python3-numpy python3-scipy
+
+      - name: Install deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ffmpeg
+          pip3 install --break-system-packages numpy scipy || pip3 install numpy scipy
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DGLINT_MODE=${{ matrix.mode }}
+
+      - name: Build
+        run: cmake --build build -j 4
+
+      - name: Unit + decode tests (ctest)
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Full quality suite (default path)
+        run: python3 tests/test_quality.py build/glint_cli
+
+      - name: Full quality suite (fixed path)
+        if: matrix.mode == 'both'
+        run: python3 tests/test_quality.py build/glint_cli --fixed
+
+  # The Rust bindings are not covered by ctest, and the crates published to
+  # crates.io build from a VENDORED copy of the C++ sources (cargo only packages
+  # files under the crate root). `cargo package` runs a verification build of
+  # the packaged crate, so this job proves the vendoring is complete — without
+  # it, a new src/*.cpp would build fine in-tree and break the published crate.
+  rust-bindings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build + test the safe wrapper (in-tree sources)
+        working-directory: bindings/rust/glint
+        run: cargo test --release
+
+      - name: Vendor the C++ sources
+        run: tools/vendor_rust_sources.sh
+
+      # --allow-dirty because the vendored tree is gitignored yet packaged (the
+      # `include` list overrides .gitignore), which cargo reports as
+      # uncommitted changes.
+      - name: Verify the packaged crate builds standalone
+        working-directory: bindings/rust/glint-sys
+        run: cargo package --allow-dirty
+
+  # Windows is built only in the release workflow, so MSVC-only breakers
+  # (M_PI without _USE_MATH_DEFINES, POSIX strcasecmp, ...) used to surface
+  # only at release time. Build all modes and run the dependency-free unit
+  # tests here to catch them on every push. The ffmpeg/numpy-based gates
+  # stay Linux/macOS-only (heavy to provision on Windows).
+  build-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [double, fixed, both]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DGLINT_MODE=${{ matrix.mode }}
+
+      - name: Build
+        run: cmake --build build --config Release -j 4
+
+      - name: Unit tests
+        run: ctest --test-dir build -C Release -R unit_tests --output-on-failure

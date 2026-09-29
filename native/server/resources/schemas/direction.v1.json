@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://readmyself.local/schemas/direction.v1.json",
+  "title": "Chapter direction v1 (FROZEN - never edit; add direction.v2.json instead)",
+  "description": "Speaker attribution for one chapter. Produced by any director, validated before any audio is rendered. Span ids refer to the deterministic span split of the chapter; directors never output chapter text.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "cast", "labels"],
+  "properties": {
+    "schema": { "const": "readmyself.direction/v1" },
+    "cast": {
+      "description": "Every speaker used in labels except Narrator, Unknown and System.",
+      "type": "object",
+      "maxProperties": 60,
+      "propertyNames": { "type": "string", "minLength": 1, "maxLength": 40, "not": { "enum": ["Narrator", "Unknown", "System"] } },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gender", "age", "voice", "aliases"],
+        "properties": {
+          "gender": { "enum": ["male", "female"] },
+          "age": { "enum": ["child", "teen", "adult", "elder"] },
+          "voice": { "type": "string", "maxLength": 80 },
+          "aliases": { "type": "array", "maxItems": 8, "items": { "type": "string", "minLength": 1, "maxLength": 40 } }
+        }
+      }
+    },
+    "labels": {
+      "description": "One entry per dialogue span (required) plus optional narration spans read by a non-narrator voice.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "speaker"],
+        "properties": {
+          "id": { "type": "integer", "minimum": 0 },
+          "speaker": { "type": "string", "minLength": 1, "maxLength": 40 }
+        }
+      }
+    }
+  }
+}

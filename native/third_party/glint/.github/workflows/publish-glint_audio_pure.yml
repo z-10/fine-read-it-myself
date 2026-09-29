@@ -1,0 +1,15 @@
+name: Publish glint_audio_pure to pub.dev
+on:
+  push:
+    tags: ['glint_audio_pure-v[0-9]+.[0-9]+.[0-9]+']
+jobs:
+  publish:
+    permissions:
+      id-token: write  # OIDC auth to pub.dev (no stored secrets)
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      # Scopes the OIDC claim to this environment, so a stray tag push or a
+      # PR workflow with id-token:write cannot publish. Rule-less (no
+      # reviewer, no branch policy) — tag -> publish stays hands-off.
+      environment: pub.dev
+      working-directory: bindings/dart_pure

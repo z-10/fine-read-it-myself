@@ -1,0 +1,152 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x86_64
+            artifact: glint_cli
+          - os: ubuntu-24.04-arm
+            name: linux-aarch64
+            artifact: glint_cli
+          - os: macos-latest
+            name: macos-arm64
+            artifact: glint_cli
+          - os: windows-latest
+            name: windows-x86_64
+            artifact: glint_cli.exe
+
+    name: Desktop ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure & build
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release -j
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [ -f build/Release/${{ matrix.artifact }} ]; then
+            cp build/Release/${{ matrix.artifact }} dist/
+          else
+            cp build/${{ matrix.artifact }} dist/
+          fi
+          cd dist
+          if [[ "${{ matrix.os }}" == windows* ]]; then
+            7z a ../glint-${{ matrix.name }}.zip *
+          else
+            tar czf ../glint-${{ matrix.name }}.tar.gz *
+          fi
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: glint-${{ matrix.name }}
+          path: glint-${{ matrix.name }}.*
+
+  android:
+    name: Android (${{ matrix.abi }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up NDK
+        uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r26d
+
+      - name: Build
+        run: |
+          cmake -B build \
+            -DCMAKE_TOOLCHAIN_FILE=${{ steps.ndk.outputs.ndk-path }}/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=${{ matrix.abi }} \
+            -DANDROID_PLATFORM=android-24 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGLINT_MODE=fixed
+          cmake --build build -j$(nproc)
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp build/libglint.a build/libglint.so dist/ 2>/dev/null || cp build/libglint.a dist/
+          cp include/glint/glint.h dist/
+          tar czf glint-android-${{ matrix.abi }}.tar.gz -C dist .
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: glint-android-${{ matrix.abi }}
+          path: glint-android-${{ matrix.abi }}.tar.gz
+
+  ios:
+    name: iOS (${{ matrix.sdk }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sdk: iphoneos
+            name: ios-device
+          - sdk: iphonesimulator
+            name: ios-simulator
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          SDK_PATH=$(xcrun --sdk ${{ matrix.sdk }} --show-sdk-path)
+          cmake -B build \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_SYSROOT=$SDK_PATH \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGLINT_MODE=fixed \
+            -DCMAKE_XCODE_ATTRIBUTE_ONLY_ACTIVE_ARCH=NO
+          cmake --build build --config Release -j
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp build/libglint.a dist/
+          cp include/glint/glint.h dist/
+          tar czf glint-${{ matrix.name }}.tar.gz -C dist .
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: glint-${{ matrix.name }}
+          path: glint-${{ matrix.name }}.tar.gz
+
+  release:
+    needs: [desktop, android, ios]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
