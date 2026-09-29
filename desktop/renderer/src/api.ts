@@ -13,7 +13,7 @@ export type Chapter = {
   to_check: number   // disputed speakers of the "check" kind the user has not looked at
 }
 // producers that can be used now: local models that are downloaded ("local" = the default one) and the user's endpoints
-export type Producer = { name: string; label: string; local: boolean }
+export type Producer = { name: string; label: string; local: boolean; default: boolean }   // default: Settings' choice
 export type Pitch = 'all' | 'low' | 'mid' | 'high'
 export type Gender = 'male' | 'female'
 export type Age = 'child' | 'teen' | 'adult' | 'elder'
@@ -24,6 +24,7 @@ export type Character = {
 export type Voice = {
   id: string; label: string; reader: string; gender: Gender; metadata_gender: string
   gender_overridden: boolean; banned: boolean; usable: boolean; band: string; f0: number
+  bundled: boolean   // shipped with the app: Remove hides it (downloaded voices are deleted)
 }
 export type Job = {
   id: number; chapter_id: number; kind: Step; state: string; stage: string; progress: number; log: string
@@ -35,7 +36,12 @@ export type Settings = {
 }
 
 // the voice catalog (tested voices on the Hugging Face hub); installed = in the bundle or downloaded
-export type CatalogVoice = { id: string; reader: string; gender: Gender; band: string; f0: number; installed: boolean; sample_url: string }
+export type CatalogVoice = {
+  id: string; reader: string; gender: Gender; band: string; f0: number; installed: boolean; sample_url: string
+  removed: boolean   // the user removed it: "Download all" skips it
+}
+// removing a voice that is in use first returns who uses it (users); with force it re-casts them
+export type VoiceRemoval = { removed?: string; deleted?: boolean; recast?: string[]; users?: string[] }
 export type VoiceDownload = { running: boolean; done: number; total: number; current: string; error: string; log: string[] }
 export type Status = { warnings: string[]; voices: number; queue: number }
 export type SetupItem = { id: string; title: string; license: string; size: number; installed: boolean; group: string }
@@ -89,7 +95,7 @@ export const api = {
   novels: () => req<Novel[]>('GET', '/novels'),
   track: (url: string) => req<Novel>('POST', '/novels', { url }),
   novel: (id: number) => req<Novel>('GET', `/novels/${id}`),
-  patchNovel: (id: number, p: Partial<Pick<Novel, 'narrator' | 'director'>>) => req<Novel>('PATCH', `/novels/${id}`, p),
+  patchNovel: (id: number, p: Partial<Pick<Novel, 'narrator'>>) => req<Novel>('PATCH', `/novels/${id}`, p),
   untrack: (id: number) => req<{ ok: boolean }>('DELETE', `/novels/${id}`),
   chapters: (id: number) => req<Chapter[]>('GET', `/novels/${id}/chapters`),
   refresh: (id: number) => req<{ new_chapters: number }>('POST', `/novels/${id}/refresh`),
@@ -112,6 +118,12 @@ export const api = {
   voiceCatalog: () => req<{ url: string; voices: CatalogVoice[]; error: string; download: VoiceDownload }>('GET', '/voices/catalog'),
   downloadVoices: (ids: string[]) => req<VoiceDownload>('POST', '/voices/download', { ids }),
   voiceDownload: () => req<VoiceDownload>('GET', '/voices/download'),
+  removeVoice: async (id: string, force = false): Promise<VoiceRemoval> => {
+    const r = await fetch(`./api/voices/${enc(id)}${force ? '?force=1' : ''}`, { method: 'DELETE' })
+    if (r.status === 409) return { users: (await r.json()).users }
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
+    return r.json()
+  },
   patchVoice: (id: string, p: { gender?: Gender | 'reset'; banned?: boolean }) =>
     req<{ voice: Voice; recast: string[] }>('PATCH', `/voices/${id}`, p),
   jobs: () => req<Job[]>('GET', '/jobs'),

@@ -29,6 +29,9 @@ public:
     // also: not installed) a new one; voices the user picked (locked) are kept. job_id < 0: log to stderr only.
     // Without `missing`, a voice that is simply not installed is left alone: narration downloads it first.
     void repair_voices(int64_t job_id, json novel, const Pool & pool, bool missing = false);
+    // the user removed voice `id`: every character using it (picked by the user or not) and a narrator using it
+    // get a new voice from `pool` (which no longer offers it); returns "novel: who old -> new" lines
+    std::vector<std::string> replace_voice(const std::string & id, const std::string & gender, const Pool & pool);
     // downloads voices missing here from the voice catalog; returns the ids installed
     using VoiceFetcher = std::function<std::vector<std::string>(const std::vector<std::string> &,
                                                                 const std::function<void(const std::string &)> &)>;

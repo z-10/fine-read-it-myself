@@ -3,6 +3,8 @@ import { api, type Producer, type ProducerProfile, type Settings, type SetupStat
 
 const EMPTY: ProducerProfile = { name: '', base_url: '', api_key: '', model: '', json_schema: true }
 const gb = (n: number) => `${(n / 1e9).toFixed(1)} GB`
+// MP3 rates offered for speech (48 kHz mono, MPEG-1); the server accepts every MPEG-1 rate
+const MP3_RATES = ['64k', '80k', '96k', '112k', '128k', '160k', '192k'] as const
 
 export default function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null)
@@ -94,7 +96,7 @@ export default function SettingsPage() {
       <button className="ghost" onClick={() => set('directors', [...s.directors, { ...EMPTY }])}>+ Add producer</button>
 
       <h3>Defaults</h3>
-      <label>Producer for new novels{' '}
+      <label>Default producer{' '}
         <select value={s.default_director} onChange={(e) => set('default_director', e.target.value, true)}>
           {!choices.some((c) => c.name === s.default_director) &&
             <option value={s.default_director} disabled>{s.default_director} (not available)</option>}
@@ -103,7 +105,14 @@ export default function SettingsPage() {
       <label>Check for new chapters every (hours){' '}
         <input type="number" min={0.5} step={0.5} value={s.check_interval_hours}
           onBlur={commit} onChange={(e) => set('check_interval_hours', Number(e.target.value))} /></label>
-      <label>MP3 bitrate <input value={s.mp3_bitrate} onBlur={commit} onChange={(e) => set('mp3_bitrate', e.target.value)} /></label>
+      <label>MP3 quality{' '}
+        <select value={s.mp3_bitrate} onChange={(e) => set('mp3_bitrate', e.target.value, true)}>
+          {!MP3_RATES.includes(s.mp3_bitrate as never) && <option value={s.mp3_bitrate}>{s.mp3_bitrate}</option>}
+          {MP3_RATES.map((r) => (
+            <option key={r} value={r}>{r.replace('k', ' kbps')} · ~{Math.round((parseInt(r) * 3600) / 8 / 1000)} MB per hour
+              {r === '96k' ? ' (default)' : ''}</option>
+          ))}
+        </select></label>
 
       {(msg || error) && <p className={error ? 'error' : 'note'}>{error || msg}</p>}
     </section>

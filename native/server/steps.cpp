@@ -200,7 +200,6 @@ void Steps::produce(int64_t cid, const std::string & producer, const StepLog & l
     const json analysis = read_json_file(analysis_path(cid));
     const Settings s = settings_();
     std::string name = producer;
-    if (name.empty()) name = (*db_.one("SELECT director FROM novels WHERE id=?", {nid})).value("director", "");
     if (name.empty()) name = s.default_director;
     log("producer: " + name, "script", 0.1);
     auto director = get_director(s, name, engines_);

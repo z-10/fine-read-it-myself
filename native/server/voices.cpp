@@ -42,6 +42,7 @@ std::string voice_label(const json & v) {
 }
 
 Pool::Pool(const std::vector<fs::path> & dirs, const fs::path & overrides) : overrides_path_(overrides) {
+    if (!dirs.empty()) first_dir_ = dirs.front();
     for (const auto & dir : dirs) {
         if (!fs::exists(dir / "pool.json")) continue;
         for (auto & v : json::parse(read_file(dir / "pool.json")).get<std::vector<json>>()) {
@@ -101,6 +102,31 @@ const json * Pool::get(const std::string & id) const {
 std::pair<fs::path, std::string> Pool::ref(const std::string & id) const {
     const fs::path & dir = dir_of_.at(id);
     return {dir / (id + ".wav"), read_file(dir / (id + ".txt"))};
+}
+
+bool Pool::bundled(const std::string & id) const {
+    auto it = dir_of_.find(id);
+    return it != dir_of_.end() && it->second == first_dir_;
+}
+
+std::set<std::string> removed_voices(const fs::path & overrides) {
+    std::set<std::string> out;
+    if (!fs::exists(overrides)) return out;
+    const json o = json::parse(read_file(overrides));
+    for (auto it = o.begin(); it != o.end(); ++it)
+        if (it.value().is_object() && it.value().value("banned", false)) out.insert(it.key());
+    return out;
+}
+
+void set_voice_removed(const fs::path & overrides, const std::string & id, bool removed) {
+    json o = fs::exists(overrides) ? json::parse(read_file(overrides)) : json::object();
+    json & e = o[id];
+    if (!e.is_object()) e = json::object();
+    if (removed) e["banned"] = true;
+    else e.erase("banned");
+    if (e.empty()) o.erase(id);
+    fs::create_directories(overrides.parent_path());
+    std::ofstream(overrides, std::ios::binary) << o.dump(1);
 }
 
 fs::path Pool::sample(const std::string & id) const {

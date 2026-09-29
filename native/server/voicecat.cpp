@@ -1,6 +1,7 @@
 #include "voicecat.h"
 
 #include "net.h"
+#include "voices.h"
 
 #include <fstream>
 #include <sstream>
@@ -43,6 +44,7 @@ json VoiceCatalog::list() {
 
 void VoiceCatalog::download(const std::vector<std::string> & ids) {
     if (running_.exchange(true)) return;
+    for (const auto & id : ids) set_voice_removed(d_.voice_overrides(), id, false);   // asked for: no longer removed
     if (thread_.joinable()) thread_.join();
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -139,6 +141,27 @@ void VoiceCatalog::log(const std::string & m) {
     std::lock_guard<std::mutex> lk(mu_);
     log_.push_back(m);
     if (log_.size() > 100) log_.erase(log_.begin());
+}
+
+void VoiceCatalog::uninstall(const std::string & id) {
+    std::lock_guard<std::mutex> guard(install_mu_);
+    const fs::path dir = d_.downloaded_voices_dir();
+    const fs::path pool_file = dir / "pool.json";
+    if (!fs::exists(pool_file)) return;
+    json pool;
+    {
+        std::ifstream in(pool_file, std::ios::binary);
+        pool = json::parse(in);
+    }
+    json keep = json::array();
+    for (const auto & v : pool)
+        if (v["id"] != id) keep.push_back(v);
+    const fs::path tmp = dir / "pool.json.tmp";
+    std::ofstream(tmp, std::ios::binary) << keep.dump(1);
+    fs::rename(tmp, pool_file);   // gone from the pool first, then its files
+    std::error_code ec;
+    for (const std::string f : {id + ".wav", id + ".txt", "samples/" + id + ".wav"}) fs::remove(dir / fs::u8path(f), ec);
+    log("removed " + id);
 }
 
 json VoiceCatalog::state() const {

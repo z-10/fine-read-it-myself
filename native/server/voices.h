@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -27,15 +28,22 @@ public:
     const json * get(const std::string & id) const;
     std::pair<std::filesystem::path, std::string> ref(const std::string & id) const;   // wav, transcript
     std::filesystem::path sample(const std::string & id) const;                          // the UI's sample line
+    bool bundled(const std::string & id) const;   // shipped with the app (read-only) rather than downloaded
     // gender: "male"/"female" to override, reset_gender to drop the override; banned when given
     void set_override(const std::string & id, const std::optional<std::string> & gender,
                       const std::optional<bool> & banned, bool reset_gender);
 
 private:
     std::map<std::string, std::filesystem::path> dir_of_;   // voice id -> its folder
+    std::filesystem::path first_dir_;                        // the voices shipped with the app
     std::filesystem::path overrides_path_;
     json overrides_;
 };
+
+// Voices the user removed (overrides "banned": true): hidden if shipped with the app, deleted if downloaded;
+// "Download all" skips them. Works for ids no longer in the pool.
+std::set<std::string> removed_voices(const std::filesystem::path & overrides);
+void set_voice_removed(const std::filesystem::path & overrides, const std::string & id, bool removed);
 
 std::string display_name(const std::string & reader);   // "JenniferRutters" -> "Jennifer Rutters"
 std::string voice_label(const json & v);                  // "Tim Bower (male, low pitch)"

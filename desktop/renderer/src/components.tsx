@@ -23,15 +23,17 @@ export function StepBadges({ c }: { c: Chapter }) {
   )
 }
 
-export function ProducerSelect({ producers, value, onChange, allowDefault }: {
-  producers: Producer[]; value: string; onChange: (v: string) => void; allowDefault?: boolean
+// A producer menu; an empty value starts on the default producer (Settings) and reports it through onChange.
+export function ProducerSelect({ producers, value, onChange }: {
+  producers: Producer[]; value: string; onChange: (v: string) => void
 }) {
+  const dflt = producers.find((p) => p.default)?.name ?? producers[0]?.name ?? ''
+  useEffect(() => { if (!value && dflt) onChange(dflt) }, [value, dflt])
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)}>
-      {allowDefault && <option value="">novel's producer</option>}
+    <select value={value || dflt} onChange={(e) => onChange(e.target.value)}>
       {value && !producers.some((p) => p.name === value) &&   // saved, but its model was removed since
         <option value={value} disabled>{value} (not available)</option>}
-      {producers.map((p) => <option key={p.name} value={p.name}>{p.label}</option>)}
+      {producers.map((p) => <option key={p.name} value={p.name}>{p.label}{p.default ? ' · default' : ''}</option>)}
     </select>
   )
 }

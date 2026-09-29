@@ -88,8 +88,9 @@ std::set<std::string> usable_ids(const Pool & pool) {
     return ids;
 }
 
-json voice_row(const json & v) {
+json voice_row(const json & v, const Pool & pool) {
     return {{"id", v["id"]}, {"label", v["label"]}, {"reader", v.value("reader", "")}, {"gender", v["gender"]},
+            {"bundled", pool.bundled(v["id"].get<std::string>())},
             {"metadata_gender", v["metadata_gender"]}, {"gender_overridden", v["gender"] != v["metadata_gender"]},
             {"banned", v["banned"]}, {"usable", !v["banned"].get<bool>()}, {"band", v.value("band", "")},
             {"f0", v.contains("f0") ? v["f0"] : json(nullptr)}};
@@ -157,11 +158,8 @@ void routes(httplib::Server & svr, App & app) {
         const Pool pool = app.pool();
         std::string narrator = b.value("narrator", "");
         if (narrator.empty() && !pool.usable().empty()) narrator = default_narrator(pool);
-        std::string director = b.value("director", "");
-        if (director.empty()) director = app.get_settings().default_director;
-        if (const std::string why = producer_problem(app, director, app.get_settings()); !why.empty()) throw HttpError{400, why};
-        try {
-            reply(res, app.library->add(b.at("url").get<std::string>(), narrator, director));
+        try {   // novels have no producer of their own: steps use the run's producer or the default one
+            reply(res, app.library->add(b.at("url").get<std::string>(), narrator, ""));
         } catch (const std::invalid_argument & e) {
             throw HttpError{400, e.what()};
         }
@@ -178,12 +176,6 @@ void routes(httplib::Server & svr, App & app) {
             const std::string v = b["narrator"].get<std::string>();
             if (!usable_ids(app.pool()).count(v)) throw HttpError{400, "voice is unknown, banned or failed QA"};
             app.db->run("UPDATE novels SET narrator=? WHERE id=?", {v, nid});
-        }
-        if (b.contains("director") && !b["director"].is_null()) {
-            const std::string d = b["director"].get<std::string>();
-            const std::string why = producer_problem(app, d, app.get_settings());
-            if (!why.empty()) throw HttpError{400, why};
-            app.db->run("UPDATE novels SET director=? WHERE id=?", {d, nid});
         }
         reply(res, novel_or_404(app, nid));
     }));
@@ -298,10 +290,13 @@ void routes(httplib::Server & svr, App & app) {
             std::snprintf(acc, sizeof acc, "%.1f%%", lp.accuracy);
             out.push_back({{"name", lp.id == kDefaultLlm ? std::string("local") : "local:" + lp.id},
                            {"label", "Local · " + lp.title + " (" + acc + " speaker check, " + std::to_string(static_cast<int>(lp.vram_gb)) + " GB VRAM)"},
-                           {"local", true}});
+                           {"local", true}, {"default", false}});
         }
         for (const auto & d : app.get_settings().directors)
-            out.push_back({{"name", d.name}, {"label", d.name + " (" + d.model + ")"}, {"local", false}});
+            out.push_back({{"name", d.name}, {"label", d.name + " (" + d.model + ")"}, {"local", false}, {"default", false}});
+        const std::string dflt = app.get_settings().default_director;   // the one menus start on
+        for (auto & o : out)
+            if (o["name"] == dflt || (dflt == "local:" + std::string(kDefaultLlm) && o["name"] == "local")) o["default"] = true;
         reply(res, out);
     }));
 
@@ -353,8 +348,9 @@ void routes(httplib::Server & svr, App & app) {
 
     svr.Get("/api/voices", H([&](const httplib::Request &, httplib::Response & res) {
         json out = json::array();
-        for (const auto & v : app.pool().voices)   // voices that failed pool QA are never shown
-            if (!v.contains("qa") || v["qa"].value("ok", true)) out.push_back(voice_row(v));
+        const Pool pool = app.pool();
+        for (const auto & v : pool.voices)   // voices that failed pool QA are never shown
+            if (!v.contains("qa") || v["qa"].value("ok", true)) out.push_back(voice_row(v, pool));
         reply(res, out);
     }));
 
@@ -389,7 +385,7 @@ void routes(httplib::Server & svr, App & app) {
                     changes.push_back(n["title"].get<std::string>() + ": " + k + " " + (it == before.end() ? "" : it->second) + " -> " + v);
             }
         }
-        reply(res, {{"voice", voice_row(*fresh.get(vid))}, {"recast", changes}});
+        reply(res, {{"voice", voice_row(*fresh.get(vid), fresh)}, {"recast", changes}});
     }));
 
     svr.Get(R"(/api/voices/([^/]+)/sample)", H([&](const httplib::Request & req, httplib::Response & res) {
@@ -402,11 +398,13 @@ void routes(httplib::Server & svr, App & app) {
     // the voice catalog: tested voices to download (the app ships with 3 male + 3 female)
     svr.Get("/api/voices/catalog", H([&](const httplib::Request &, httplib::Response & res) {
         const Pool pool = app.pool();
+        const auto removed = removed_voices(app.deploy.voice_overrides());
         json out = json::array();
         std::string error;
         try {
             for (auto v : app.voice_catalog->list()) {
                 v["installed"] = pool.get(v["id"].get<std::string>()) != nullptr;
+                v["removed"] = removed.count(v["id"].get<std::string>()) > 0;   // "Download all" skips these
                 out.push_back(v);
             }
         } catch (const std::exception & e) {
@@ -422,6 +420,32 @@ void routes(httplib::Server & svr, App & app) {
         app.voice_catalog->download(ids);
         reply(res, app.voice_catalog->state());
     }));
+    // remove a voice: a downloaded one is deleted, one shipped with the app is hidden. Voices that characters or a
+    // narrator use need ?force=1 (the reply lists them first); those get new voices, even ones the user picked.
+    svr.Delete(R"(/api/voices/([^/]+))", H([&](const httplib::Request & req, httplib::Response & res) {
+        const std::string vid = req.matches[1];
+        const Pool pool = app.pool();
+        if (!pool.get(vid)) throw HttpError{404, "Not Found"};
+        json users = json::array();
+        for (const auto & n : app.db->all("SELECT * FROM novels")) {
+            if (n["narrator"].is_string() && n["narrator"] == vid) users.push_back(n["title"].get<std::string>() + ": narrator");
+            for (const auto & c : app.db->cast(n["id"].get<int64_t>()))
+                if (c["voice"] == vid)
+                    users.push_back(n["title"].get<std::string>() + ": " + c["name"].get<std::string>() +
+                                    (c["locked"].get<int>() ? " (picked by you)" : ""));
+        }
+        if (!users.empty() && req.get_param_value("force") != "1") {
+            reply(res, {{"detail", "voice in use"}, {"users", users}}, 409);
+            return;
+        }
+        const bool bundled = pool.bundled(vid);
+        const std::string gender = (*pool.get(vid))["gender"].get<std::string>();   // before it is gone
+        set_voice_removed(app.deploy.voice_overrides(), vid, true);
+        if (!bundled) app.voice_catalog->uninstall(vid);
+        const json recast = app.worker->replace_voice(vid, gender, app.pool());
+        reply(res, {{"removed", vid}, {"deleted", !bundled}, {"recast", recast}});
+    }));
+
     svr.Get("/api/voices/download", H([&](const httplib::Request &, httplib::Response & res) {
         reply(res, app.voice_catalog->state());
     }));

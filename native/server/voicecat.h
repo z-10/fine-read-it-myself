@@ -25,6 +25,8 @@ public:
     nlohmann::json list();
     void download(const std::vector<std::string> & ids);   // in the background; ignored while one is running
     nlohmann::json state() const;                          // {running, done, total, current, error, log}
+    // deletes a downloaded voice's files and pool entry (no-op for voices shipped with the app)
+    void uninstall(const std::string & id);
     // Before narration: download the voices a cast uses that are missing here but in the catalog (e.g. after
     // reinstalling the app). Returns the ids installed; unreachable catalog: logs and returns what it could.
     std::vector<std::string> ensure(const std::vector<std::string> & ids, const std::function<void(const std::string &)> & log);

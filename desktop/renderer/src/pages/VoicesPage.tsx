@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, sampleUrl, type CatalogVoice, type Voice, type VoiceDownload } from '../api'
 
-type Filter = 'all' | 'male' | 'female' | 'banned'
+type Filter = 'all' | 'male' | 'female' | 'removed'
 const PAGE_SIZES = [25, 50, 100, 0] as const   // 0 = all
 
 export default function VoicesPage() {
@@ -42,6 +42,7 @@ function MoreVoices() {
   if (error) return <p className="error">Voice catalog unavailable: {error}</p>
   if (!voices) return <p className="hint">Loading the voice catalog…</p>
   const missing = voices.filter((v) => !v.installed && (gender === 'all' || v.gender === gender))
+  const toGet = missing.filter((v) => !v.removed)   // "Download all" leaves out voices you removed
   const download = (ids: string[]) => api.downloadVoices(ids).then(setDl).catch((e) => setError((e as Error).message))
   return (
     <>
@@ -56,7 +57,7 @@ function MoreVoices() {
         <span className="spacer" />
         {dl?.running
           ? <span className="note">Downloading {dl.done} / {dl.total}{dl.current ? ` (${dl.current})` : ''}…</span>
-          : missing.length > 0 && <button onClick={() => download(missing.map((v) => v.id))}>Download all {missing.length}</button>}
+          : toGet.length > 0 && <button onClick={() => download(toGet.map((v) => v.id))}>Download all {toGet.length}</button>}
       </div>
       {dl?.error && <p className="error">{dl.error} — press Download again to resume.</p>}
       {missing.length === 0 && <p className="empty">All {gender === 'all' ? '' : gender + ' '}voices of the catalog are installed.</p>}
@@ -64,7 +65,8 @@ function MoreVoices() {
         {missing.map((v) => (
           <tr key={v.id}>
             <td><audio controls preload="none" src={v.sample_url} className="mini" /></td>
-            <td><b>{readerName(v.reader)}</b> <span className="muted">({v.gender}, {BAND[v.band] ?? v.band})</span></td>
+            <td><b>{readerName(v.reader)}</b> <span className="muted">({v.gender}, {BAND[v.band] ?? v.band})</span>
+              {v.removed && <span className="tag" title="not included in Download all">removed by you</span>}</td>
             <td><button className="ghost small-btn" disabled={dl?.running} onClick={() => download([v.id])}>Download</button></td>
           </tr>
         ))}
@@ -86,8 +88,8 @@ function InstalledVoices() {
   useEffect(() => { load() }, [])
 
   const shown = useMemo(() => voices.filter(v =>
-    filter === 'all' ? true :
-      filter === 'banned' ? v.banned :
+    filter === 'all' ? !v.banned :
+      filter === 'removed' ? v.banned :
         v.gender === filter && v.usable), [voices, filter])
   const per = pageSize || Math.max(1, shown.length)
   const pages = Math.max(1, Math.ceil(shown.length / per))
@@ -101,24 +103,36 @@ function InstalledVoices() {
     load()
   }
 
+  async function remove(v: Voice) {
+    try {
+      let r = await api.removeVoice(v.id)
+      if (r.users) {   // in use: say who gets a new voice, then go ahead
+        if (!confirm(`${v.label} is used by:\n\n${r.users.join('\n')}\n\nRemove it? They will get new voices.`)) return
+        r = await api.removeVoice(v.id, true)
+      }
+      setMsg(`Removed ${v.label}${r.deleted ? ' (deleted)' : ' (hidden)'}` + (r.recast?.length ? `. Re-cast: ${r.recast.join('; ')}` : ''))
+      load()
+    } catch (e) { setMsg((e as Error).message) }
+  }
+
   const counts = {
     male: voices.filter(v => v.usable && v.gender === 'male').length,
     female: voices.filter(v => v.usable && v.gender === 'female').length,
-    banned: voices.filter(v => v.banned).length,
+    removed: voices.filter(v => v.banned).length,
   }
 
   return (
     <>
       <div className="toolbar">
         <div className="seg">
-          {([['all', `all (${voices.length})`], ['male', `male (${counts.male})`], ['female', `female (${counts.female})`],
-            ['banned', `banned (${counts.banned})`]] as const).map(([f, t]) =>
+          {([['all', `all (${voices.filter(v => !v.banned).length})`], ['male', `male (${counts.male})`], ['female', `female (${counts.female})`],
+            ...(counts.removed ? [['removed', `removed (${counts.removed})`]] as const : [])] as const).map(([f, t]) =>
             <button key={f} className={filter === f ? 'on' : ''} onClick={() => setFilter(f)}>{t}</button>)}
         </div>
       </div>
       <p className="muted small">Gender comes from the LibriTTS-R reader metadata; flip it here if it's wrong.
-        Banned voices are never used; characters using a banned or flipped voice get a new one automatically
-        (unless you picked their voice yourself).</p>
+        Remove a voice you don't want: a downloaded one is deleted (you can download it again under More voices), one that
+        came with the app is hidden. Characters using a removed or flipped voice get a new one.</p>
       {msg && <p className="note">{msg}</p>}
       <table className="voices"><tbody>
         {pageRows.map(v => (
@@ -134,8 +148,10 @@ function InstalledVoices() {
               {v.gender_overridden && <button className="ghost small-btn" title={`dataset says ${v.metadata_gender}`}
                 onClick={() => patch(v, { gender: 'reset' })}>reset</button>}
             </td>
-            <td><label className="small"><input type="checkbox" checked={v.banned}
-              onChange={e => patch(v, { banned: e.target.checked })} /> banned</label></td>
+            <td>{v.banned
+              ? <button className="ghost small-btn" title="use this voice again" onClick={() => patch(v, { banned: false })}>Restore</button>
+              : <button className="ghost small-btn" onClick={() => remove(v)}
+                  title={v.bundled ? 'came with the app: hidden, can be restored' : 'deleted; can be downloaded again under More voices'}>Remove</button>}</td>
           </tr>))}
       </tbody></table>
       <div className="pager">

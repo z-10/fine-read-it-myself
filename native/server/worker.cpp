@@ -162,6 +162,38 @@ void Worker::repair_voices(int64_t jid, json novel, const Pool & pool, bool miss
     }
 }
 
+std::vector<std::string> Worker::replace_voice(const std::string & id, const std::string & gender, const Pool & pool) {
+    std::vector<std::string> out;
+    for (auto novel : db_.all("SELECT * FROM novels")) {
+        const int64_t nid = novel["id"].get<int64_t>();
+        const std::string title = novel["title"].get<std::string>();
+        if (novel["narrator"].is_string() && novel["narrator"] == id) {
+            const std::string fresh = default_narrator(pool, gender);   // same gender as the removed voice
+            db_.run("UPDATE novels SET narrator=? WHERE id=?", {fresh, nid});
+            novel["narrator"] = fresh;
+            out.push_back(title + ": narrator " + id + " -> " + fresh);
+        }
+        std::vector<json> hit, keep;
+        for (const auto & c : db_.cast(nid)) (c["voice"] == id ? hit : keep).push_back(c);
+        if (hit.empty()) continue;
+        std::vector<std::pair<std::string, json>> entries;
+        std::map<std::string, int> counts;
+        for (const auto & c : hit) {
+            entries.emplace_back(c["name"].get<std::string>(),
+                                 json{{"gender", c["gender"]}, {"age", c["age"]}, {"voice", c["voice_hint"]}, {"pitch", c["pitch"]}});
+            counts[c["name"].get<std::string>()] = c["lines"].get<int>();
+        }
+        const auto picks = assign(pool, keep, novel["narrator"].is_string() ? novel["narrator"].get<std::string>() : "", entries, counts);
+        for (const auto & c : hit) {
+            auto p = picks.find(c["name"].get<std::string>());
+            if (p == picks.end()) continue;
+            db_.upsert_character(nid, c["name"].get<std::string>(), {{"voice", p->second}, {"locked", 0}});
+            out.push_back(title + ": " + c["name"].get<std::string>() + " " + id + " -> " + p->second);
+        }
+    }
+    return out;
+}
+
 void Worker::run(const json & job) {
     const int64_t jid = job["id"].get<int64_t>(), cid = job["chapter_id"].get<int64_t>();
     const std::string kind = job.value("kind", "narrate");

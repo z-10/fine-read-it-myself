@@ -79,10 +79,6 @@ export default function NovelPage({ id }: { id: number }) {
           )}
           <div className="actions">
             <button onClick={check} disabled={checking}>{checking ? 'Checking…' : 'Check for new chapters'}</button>
-            <label className="small">Producer{' '}
-              <ProducerSelect producers={producers} value={novel.director}
-                onChange={(v) => api.patchNovel(id, { director: v }).then(setNovel)} />
-            </label>
             {note && <span className="note">{note}</span>}
           </div>
         </div>
@@ -160,7 +156,7 @@ function ChaptersTab({ novelId, chapters, producers, reload }: {
         <button disabled={!sel.size} onClick={() => run(['script'])}>2 · Script</button>
         <button disabled={!sel.size} onClick={() => run(['narrate'])}>3 · Narrate</button>
         <button disabled={!sel.size} onClick={() => run(['analyze', 'script', 'narrate'])}>All steps</button>
-        <label className="small">script by <ProducerSelect producers={producers} value={producer} onChange={setProducer} allowDefault /></label>
+        <label className="small">script by <ProducerSelect producers={producers} value={producer} onChange={setProducer} /></label>
         {sel.size > 0 && <button className="ghost small-btn" onClick={() => setSel(new Set())}>clear</button>}
         {msg && <span className="note">{msg}</span>}
       </div>

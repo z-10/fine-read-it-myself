@@ -1,5 +1,6 @@
 #include "settings.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -51,7 +52,14 @@ Settings Settings::from_json(const json & j) {
         if (j.contains("user_sources_dir") && !j["user_sources_dir"].is_null())
             s.user_sources_dir = fs::u8path(j["user_sources_dir"].get<std::string>());
         if (j.contains("check_interval_hours")) s.check_interval_hours = j["check_interval_hours"].get<double>();
-        if (j.contains("mp3_bitrate")) s.mp3_bitrate = j["mp3_bitrate"].get<std::string>();
+        if (j.contains("mp3_bitrate")) {   // MPEG-1 layer III rates (the narration is 48 kHz mono)
+            s.mp3_bitrate = j["mp3_bitrate"].get<std::string>();
+            static const int kRates[] = {32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320};
+            const int kbps = std::atoi(s.mp3_bitrate.c_str());
+            if (std::find(std::begin(kRates), std::end(kRates), kbps) == std::end(kRates))
+                throw std::invalid_argument("mp3_bitrate must be one of 32k-320k MPEG-1 rates, e.g. 96k");
+            s.mp3_bitrate = std::to_string(kbps) + "k";
+        }
         if (j.contains("voice_catalog") && !j["voice_catalog"].get<std::string>().empty()) s.voice_catalog = j["voice_catalog"].get<std::string>();
     } catch (const json::exception & e) {
         throw std::invalid_argument(e.what());

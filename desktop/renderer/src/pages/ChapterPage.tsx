@@ -80,7 +80,7 @@ export default function ChapterPage({ id, initialTab }: { id: number; initialTab
       <div className="step-cards">
         {stepCard('analyze', 1, ch.analyzed_at, null, true)}
         {stepCard('script', 2, ch.scripted_at,
-          <ProducerSelect producers={producers} value={producer} onChange={setProducer} allowDefault />, !!ch.analyzed_at || !!job('analyze'))}
+          <ProducerSelect producers={producers} value={producer} onChange={setProducer} />, !!ch.analyzed_at || !!job('analyze'))}
         {stepCard('narrate', 3, ch.narrated_at, null, !!ch.scripted_at || !!job('script'))}
         <div className="step-card all">
           <div className="step-head">All steps</div>
