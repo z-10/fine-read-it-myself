@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "build:renderer": "npm --prefix renderer run build",
-    "dist": "npm run build:renderer && electron-builder"
+    "dist": "npm run build:renderer && cmake --install ../native/build --prefix ../native/build/bundle && electron-builder"
   },
   "devDependencies": {
     "electron": "^39.0.0",

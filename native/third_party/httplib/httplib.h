@@ -5126,6 +5126,9 @@ bool get_cert_sans(cert_t cert, std::vector<SanEntry> &sans);
 bool get_cert_validity(cert_t cert, time_t &not_before, time_t &not_after);
 std::string get_cert_serial(cert_t cert);
 bool get_cert_der(cert_t cert, std::vector<unsigned char> &der);
+// DER of the certificates the peer sent, its own certificate first
+bool get_peer_cert_chain_der(const_session_t session,
+                             std::vector<std::vector<unsigned char>> &chain);
 const char *get_sni(const_session_t session);
 
 // CA store management
@@ -10686,25 +10689,40 @@ inline bool match_hostname(const std::string &pattern,
 }
 
 #ifdef _WIN32
-// Verify certificate using Windows CertGetCertificateChain API.
-// This provides real-time certificate validation with Windows Update
-// integration, independent of the TLS backend (OpenSSL or MbedTLS).
-inline bool
-verify_cert_with_windows_schannel(const std::vector<unsigned char> &der_cert,
-                                  const std::string &hostname,
-                                  bool verify_hostname, uint64_t &out_error) {
-  if (der_cert.empty()) { return false; }
-
+// Verify a server certificate chain with the Windows chain engine
+// (CertGetCertificateChain + the SSL policy), independent of the TLS backend.
+// This is Windows' own trust decision: roots missing from the local store are
+// fetched by Automatic Root Certificates Update, missing intermediates by AIA,
+// and revocation and the hostname are checked.
+// chain[0] is the server's certificate; the rest are the intermediates it sent.
+inline bool verify_cert_with_windows_schannel(
+    const std::vector<std::vector<unsigned char>> &chain,
+    const std::string &hostname, bool verify_hostname, uint64_t &out_error) {
   out_error = 0;
+  if (chain.empty() || chain[0].empty()) { return false; }
 
-  // Create Windows certificate context from DER data
-  auto cert_context = CertCreateCertificateContext(
-      X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, der_cert.data(),
-      static_cast<DWORD>(der_cert.size()));
-
-  if (!cert_context) {
+  // In-memory store holding everything the server sent, so the chain builder
+  // can use the intermediates without downloading them
+  auto sent_store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0,
+                                  CERT_STORE_CREATE_NEW_FLAG, nullptr);
+  if (!sent_store) {
     out_error = GetLastError();
     return false;
+  }
+  auto store_guard = scope_exit([&] { CertCloseStore(sent_store, 0); });
+
+  PCCERT_CONTEXT cert_context = nullptr;
+  for (size_t i = 0; i < chain.size(); i++) {
+    PCCERT_CONTEXT added = nullptr;
+    if (!CertAddEncodedCertificateToStore(
+            sent_store, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+            chain[i].data(), static_cast<DWORD>(chain[i].size()),
+            CERT_STORE_ADD_USE_EXISTING, i == 0 ? &added : nullptr)) {
+      out_error = GetLastError();
+      if (cert_context) { CertFreeCertificateContext(cert_context); }
+      return false;
+    }
+    if (i == 0) { cert_context = added; }
   }
 
   auto cert_guard =
@@ -10717,7 +10735,7 @@ verify_cert_with_windows_schannel(const std::vector<unsigned char> &der_cert,
   // Build certificate chain with revocation checking
   PCCERT_CHAIN_CONTEXT chain_context = nullptr;
   auto chain_result = CertGetCertificateChain(
-      nullptr, cert_context, nullptr, cert_context->hCertStore, &chain_para,
+      nullptr, cert_context, nullptr, sent_store, &chain_para,
       CERT_CHAIN_CACHE_END_CERT | CERT_CHAIN_REVOCATION_CHECK_END_CERT |
           CERT_CHAIN_REVOCATION_ACCUMULATIVE_TIMEOUT,
       nullptr, &chain_context);
@@ -10859,12 +10877,23 @@ inline bool setup_client_tls_session(
     return fail(Error::SSLConnection, 0, 0);
   }
 
+  // With Windows certificate verification the Windows chain engine decides
+  // trust (see verify_cert_with_windows_schannel); the TLS backend's own chain
+  // verification against its copy of the system store is then not a
+  // prerequisite, since that copy lacks the roots Windows fetches on demand.
+#ifdef CPPHTTPLIB_WINDOWS_AUTOMATIC_ROOT_CERTIFICATES_UPDATE
+  const bool windows_trust =
+      server_certificate_verification && options.windows_cert_verification;
+#else
+  const bool windows_trust = false;
+#endif
+
 #if defined(CPPHTTPLIB_MBEDTLS_SUPPORT) || defined(CPPHTTPLIB_WOLFSSL_SUPPORT)
   // Mbed TLS and wolfSSL need the verification mode set explicitly; OpenSSL
   // uses SSL_VERIFY_NONE and does all verification post-handshake. Chain
   // verification happens during the handshake even for IP hosts; the
   // certificate identity is verified post-handshake via verify_hostname().
-  set_verify_client(ctx, server_certificate_verification);
+  set_verify_client(ctx, server_certificate_verification && !windows_trust);
 #endif
 
   {
@@ -10909,10 +10938,12 @@ inline bool setup_client_tls_session(
 
   if (verification_status == SSLVerifierResponse::NoDecisionMade &&
       server_certificate_verification) {
-    auto verify_result = get_verify_result(session);
-    if (verify_result != 0) {
-      return fail(Error::SSLServerVerification, 0,
-                  static_cast<uint64_t>(verify_result));
+    if (!windows_trust) {
+      auto verify_result = get_verify_result(session);
+      if (verify_result != 0) {
+        return fail(Error::SSLServerVerification, 0,
+                    static_cast<uint64_t>(verify_result));
+      }
     }
 
     auto server_cert = get_peer_cert(session);
@@ -10932,18 +10963,18 @@ inline bool setup_client_tls_session(
     }
 
 #ifdef CPPHTTPLIB_WINDOWS_AUTOMATIC_ROOT_CERTIFICATES_UPDATE
-    // Additional Windows Schannel verification.
-    // This provides real-time certificate validation with Windows Update
-    // integration, working with both OpenSSL and MbedTLS backends.
-    if (options.windows_cert_verification) {
-      std::vector<unsigned char> der;
-      if (get_cert_der(server_cert, der)) {
-        uint64_t wincrypt_error = 0;
-        if (!verify_cert_with_windows_schannel(
-                der, host, options.server_hostname_verification,
-                wincrypt_error)) {
-          return fail(Error::SSLServerVerification, 0, wincrypt_error);
-        }
+    // Windows trust decision on the chain the server sent (fails closed: no
+    // chain, no trust)
+    if (windows_trust) {
+      std::vector<std::vector<unsigned char>> chain;
+      if (!get_peer_cert_chain_der(session, chain)) {
+        return fail(Error::SSLServerVerification, 0, get_error());
+      }
+      uint64_t wincrypt_error = 0;
+      if (!verify_cert_with_windows_schannel(
+              chain, host, options.server_hostname_verification,
+              wincrypt_error)) {
+        return fail(Error::SSLServerVerification, 0, wincrypt_error);
       }
     }
 #endif
@@ -19676,6 +19707,26 @@ inline std::string get_cert_serial(cert_t cert) {
   return result;
 }
 
+inline bool get_peer_cert_chain_der(
+    const_session_t session, std::vector<std::vector<unsigned char>> &chain) {
+  chain.clear();
+  if (!session) { return false; }
+  auto ssl = static_cast<SSL *>(const_cast<void *>(session));
+  // on the client side the stack includes the server's own certificate
+  STACK_OF(X509) *certs = SSL_get_peer_cert_chain(ssl);
+  if (!certs) { return false; }
+  for (int i = 0; i < sk_X509_num(certs); i++) {
+    X509 *cert = sk_X509_value(certs, i);
+    int len = i2d_X509(cert, nullptr);
+    if (len <= 0) { return false; }
+    std::vector<unsigned char> der(static_cast<size_t>(len));
+    unsigned char *out = der.data();
+    if (i2d_X509(cert, &out) != len) { return false; }
+    chain.push_back(std::move(der));
+  }
+  return !chain.empty();
+}
+
 inline bool get_cert_der(cert_t cert, std::vector<unsigned char> &der) {
   if (!cert) return false;
   auto x509 = static_cast<X509 *>(cert);
@@ -21070,6 +21121,21 @@ inline std::string get_cert_serial(cert_t cert) {
   return result;
 }
 
+inline bool get_peer_cert_chain_der(
+    const_session_t session, std::vector<std::vector<unsigned char>> &chain) {
+  chain.clear();
+  if (!session) { return false; }
+  auto msession =
+      static_cast<impl::MbedTlsSession *>(const_cast<void *>(session));
+  // the peer's certificate followed by the rest of the chain it sent
+  for (auto crt = mbedtls_ssl_get_peer_cert(&msession->ssl); crt;
+       crt = crt->next) {
+    if (!crt->raw.p || crt->raw.len == 0) { return false; }
+    chain.emplace_back(crt->raw.p, crt->raw.p + crt->raw.len);
+  }
+  return !chain.empty();
+}
+
 inline bool get_cert_der(cert_t cert, std::vector<unsigned char> &der) {
   if (!cert) return false;
   auto crt = static_cast<mbedtls_x509_crt *>(cert);
@@ -22243,6 +22309,24 @@ inline std::string get_cert_serial(cert_t cert) {
     result += hex;
   }
   return result;
+}
+
+inline bool get_peer_cert_chain_der(
+    const_session_t session, std::vector<std::vector<unsigned char>> &chain) {
+  chain.clear();
+  if (!session) { return false; }
+  auto wsession =
+      static_cast<impl::WolfSSLSession *>(const_cast<void *>(session));
+  // needs wolfSSL built with SESSION_CERTS
+  WOLFSSL_X509_CHAIN *certs = wolfSSL_get_peer_chain(wsession->ssl);
+  if (!certs) { return false; }
+  for (int i = 0; i < wolfSSL_get_chain_count(certs); i++) {
+    const unsigned char *der = wolfSSL_get_chain_cert(certs, i);
+    int len = wolfSSL_get_chain_length(certs, i);
+    if (!der || len <= 0) { return false; }
+    chain.emplace_back(der, der + len);
+  }
+  return !chain.empty();
 }
 
 inline bool get_cert_der(cert_t cert, std::vector<unsigned char> &der) {

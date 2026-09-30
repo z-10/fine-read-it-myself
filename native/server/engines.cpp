@@ -6,6 +6,7 @@
 #include "engine/framework/runtime/session.h"
 #include "engine/models/voxcpm2/loader.h"
 
+#include "ggml-backend.h"
 #include "json-schema-to-grammar.h"
 #include "llama.h"
 
@@ -33,6 +34,12 @@ static engine::core::BackendType backend_type(const std::string & gpu) {
 #ifdef __APPLE__
     if (gpu.empty()) return engine::core::BackendType::Metal;
 #endif
+    if (gpu.empty()) {   // best available: the CPU when there is no GPU driver (no Vulkan device)
+        bool any_gpu = false;
+        for (size_t i = 0; i < ggml_backend_dev_count(); ++i)
+            any_gpu = any_gpu || ggml_backend_dev_type(ggml_backend_dev_get(i)) == GGML_BACKEND_DEVICE_TYPE_GPU;
+        if (!any_gpu) return engine::core::BackendType::Cpu;
+    }
     return engine::core::BackendType::Vulkan;
 }
 

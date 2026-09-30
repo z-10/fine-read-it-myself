@@ -2,10 +2,12 @@
 // the web UI build served at /.
 //
 //   readmyself-server [--host 127.0.0.1] [--port 8765] [--data DIR] [--models DIR] [--web DIR]
+#include "audio_io.h"
 #include "db.h"
 #include "directors.h"
 #include "engines.h"
 #include "library.h"
+#include "net.h"
 #include "llm_presets.h"
 #include "scrape.h"
 #include "settings.h"
@@ -23,6 +25,7 @@
 #include "httplib.h"
 
 #include <atomic>
+#include <chrono>
 #include <fstream>
 #include <functional>
 #include <condition_variable>
@@ -650,6 +653,14 @@ private:
 };
 
 int main(int argc, char ** argv) {
+#ifdef _WIN32
+    // vulkan-1.dll comes with the GPU driver and is delay-loaded: without it (no driver, a bare VM) everything runs on
+    // the CPU instead of the program failing to start. ggml must not touch Vulkan then.
+    if (std::getenv("READMYSELF_NO_VULKAN") || !LoadLibraryW(L"vulkan-1.dll")) {
+        _putenv_s("GGML_DISABLE_VULKAN", "1");
+        std::cerr << "no Vulkan (GPU driver) found: running on the CPU, which is much slower" << std::endl;
+    }
+#endif
     std::string host = "127.0.0.1";
     int port = 8765;
     std::optional<fs::path> data, models, web, voices;
@@ -663,6 +674,35 @@ int main(int argc, char ** argv) {
         else if (k == "--web") web = fs::u8path(v);
         else if (k == "--voices") voices = fs::u8path(v);
         else if (k == "--share-port") share_port = std::stoi(v);   // headless mode: share on the network regardless of Settings
+    }
+    if (argc >= 3 && std::string(argv[1]) == "--https-get") {   // diagnostics: one request, certificate checks included
+        const HttpResponse r = http_get(argv[2], {{"User-Agent", "fine-read-it"}}, 30);
+        if (!r.error.empty()) {
+            std::cout << "error: " << r.error << std::endl;
+            return 1;
+        }
+        std::cout << "HTTP " << r.status << ", " << r.body.size() << " bytes" << std::endl;
+        return 0;
+    }
+    // diagnostics: one line through the narration engine (GPU, or the CPU without one)
+    //   --speak <voice.wav (its transcript next to it as .txt)> <text> <out.wav> [--models DIR]
+    if (argc >= 5 && std::string(argv[1]) == "--speak") {
+        try {
+            const Deploy d = load_deploy(data, models, voices);
+            Engines engines(d);
+            const fs::path ref = fs::u8path(argv[2]);
+            std::ifstream t(fs::path(ref).replace_extension(".txt"), std::ios::binary);
+            const std::string ref_text((std::istreambuf_iterator<char>(t)), std::istreambuf_iterator<char>());
+            const auto t0 = std::chrono::steady_clock::now();
+            const Audio a = engines.speak(argv[3], ref, strip(ref_text));
+            write_wav16(fs::u8path(argv[4]), a);
+            std::cout << static_cast<double>(a.samples.size()) / a.sample_rate << " s of audio in "
+                      << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() << " s" << std::endl;
+            return 0;
+        } catch (const std::exception & e) {
+            std::cerr << "error: " << e.what() << std::endl;
+            return 1;
+        }
     }
     if (argc >= 4 && std::string(argv[1]) == "--convert-booknlp") {   // first-run model conversion (desktop setup)
         try {
