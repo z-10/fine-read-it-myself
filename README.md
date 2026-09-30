@@ -29,9 +29,7 @@ The **Sites** tab lists every installed site and keeps its login cookie and requ
 Changes apply to the next request; existing saved site logins are retained. Leave the delay empty to use the
 plugin default. Cookies are masked in API responses and can be removed with **Forget login**.
 
-Paste a book or chapter URL into the Library, including NovelFire URLs such as
-`https://novelfire.net/book/the-regressed-son-of-a-duke-is-an-assassin/chapter-1`.
-NovelFire chapter discovery uses its published chapter count and numbered URLs. Sites can still reject
+Paste a book or chapter URL into the the library. Sites can still reject
 automated requests (for example, HTTP 403); a plugin does not solve browser challenges.
 
 To add or override a site, put a `.yaml` file in `<data>/plugins` and restart the app. An optional
