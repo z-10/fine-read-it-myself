@@ -1,0 +1,11 @@
+Reference voices derived from LibriTTS-R (Koizumi et al., 2023), CC BY 4.0, itself derived from
+LibriTTS / LibriVox public-domain recordings.
+Changes: short reference clips were cut from the original recordings; the sample lines were
+synthesized with VoxCPM2 from those clips.
+
+M044: LibriTTS-R test-clean speaker 2300 (Mitchell L Leopard), CC BY 4.0 (LibriTTS-R, https://www.openslr.org/141/)
+F057: LibriTTS-R train-clean-100 speaker 6078 (dobsonfly), CC BY 4.0 (LibriTTS-R, https://www.openslr.org/141/)
+S839: LibriTTS-R train-clean-100 speaker 839 (rovert405), CC BY 4.0 (LibriTTS-R, https://www.openslr.org/141/)
+S7402: LibriTTS-R train-clean-100 speaker 7402 (Canby Ibarra), CC BY 4.0 (LibriTTS-R, https://www.openslr.org/141/)
+S40: LibriTTS-R train-clean-100 speaker 40 (Vicki Barbour), CC BY 4.0 (LibriTTS-R, https://www.openslr.org/141/)
+S4970: LibriTTS-R test-clean speaker 4970 (airandwaters), CC BY 4.0 (LibriTTS-R, https://www.openslr.org/141/)

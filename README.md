@@ -47,13 +47,9 @@ npm run build:renderer
 npm start
 ```
 
-The app ships with six voices in `desktop/voices` (not in git). Build them from the published voice catalog:
-
-```bat
-native\build\readmyself-server --export-voice-pool <voice catalog folder> desktop\voices M009,M030,M046,F011,F031,F052
-```
-
-where the catalog folder is a download of [zloezlo/fine-read-it-voices](https://huggingface.co/datasets/zloezlo/fine-read-it-voices). `npm run dist` builds the installer.
+The app ships with six voices in `desktop/voices`: the three clearest male and three clearest female readers of the
+[voice catalog](https://huggingface.co/datasets/zloezlo/fine-read-it-voices) (CC BY 4.0, see `ATTRIBUTION.txt` there);
+the rest download from the Voices tab. `npm run dist` builds the installer.
 
 ## Models and data
 

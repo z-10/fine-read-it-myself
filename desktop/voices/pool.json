@@ -1,0 +1,140 @@
+[
+ {
+  "band": "high",
+  "f0": 132,
+  "gender": "male",
+  "id": "M044",
+  "license": "CC BY 4.0 (LibriTTS-R, https://www.openslr.org/141/)",
+  "qa": {
+   "clone_f0": [
+    144,
+    144
+   ],
+   "drift": 0.091,
+   "ok": true,
+   "reasons": [],
+   "secs": [
+    4.96,
+    4.8
+   ],
+   "spread": 0.0
+  },
+  "reader": "Mitchell L Leopard",
+  "source": "LibriTTS-R test-clean speaker 2300 chapter 131720"
+ },
+ {
+  "band": "high",
+  "f0": 234,
+  "gender": "female",
+  "id": "F057",
+  "license": "CC BY 4.0 (LibriTTS-R, https://www.openslr.org/141/)",
+  "qa": {
+   "clone_f0": [
+    235,
+    226
+   ],
+   "drift": 0.034,
+   "ok": true,
+   "reasons": [],
+   "secs": [
+    4.96,
+    5.76
+   ],
+   "spread": 0.04
+  },
+  "reader": "dobsonfly",
+  "source": "LibriTTS-R train-clean-100 speaker 6078 chapter 54007"
+ },
+ {
+  "band": "high",
+  "f0": 130,
+  "gender": "male",
+  "id": "S839",
+  "license": "CC BY 4.0 (LibriTTS-R, https://www.openslr.org/141/)",
+  "qa": {
+   "clone_f0": [
+    134,
+    143
+   ],
+   "drift": 0.1,
+   "ok": true,
+   "reasons": [],
+   "secs": [
+    6.08,
+    6.4
+   ],
+   "spread": 0.067
+  },
+  "reader": "rovert405",
+  "source": "LibriTTS-R train-clean-100 speaker 839 chapter 130898"
+ },
+ {
+  "band": "high",
+  "f0": 151,
+  "gender": "male",
+  "id": "S7402",
+  "license": "CC BY 4.0 (LibriTTS-R, https://www.openslr.org/141/)",
+  "qa": {
+   "clone_f0": [
+    155,
+    138
+   ],
+   "drift": 0.086,
+   "ok": true,
+   "reasons": [],
+   "secs": [
+    4.96,
+    4.96
+   ],
+   "spread": 0.123
+  },
+  "reader": "Canby Ibarra",
+  "source": "LibriTTS-R train-clean-100 speaker 7402 chapter 59171"
+ },
+ {
+  "band": "high",
+  "f0": 220,
+  "gender": "female",
+  "id": "S40",
+  "license": "CC BY 4.0 (LibriTTS-R, https://www.openslr.org/141/)",
+  "qa": {
+   "clone_f0": [
+    234,
+    241
+   ],
+   "drift": 0.095,
+   "ok": true,
+   "reasons": [],
+   "secs": [
+    4.32,
+    6.72
+   ],
+   "spread": 0.03
+  },
+  "reader": "Vicki Barbour",
+  "source": "LibriTTS-R train-clean-100 speaker 40 chapter 121026"
+ },
+ {
+  "band": "high",
+  "f0": 226,
+  "gender": "female",
+  "id": "S4970",
+  "license": "CC BY 4.0 (LibriTTS-R, https://www.openslr.org/141/)",
+  "qa": {
+   "clone_f0": [
+    212,
+    213
+   ],
+   "drift": 0.062,
+   "ok": true,
+   "reasons": [],
+   "secs": [
+    4.16,
+    4.8
+   ],
+   "spread": 0.005
+  },
+  "reader": "airandwaters",
+  "source": "LibriTTS-R test-clean speaker 4970 chapter 29093"
+ }
+]
