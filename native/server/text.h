@@ -29,4 +29,10 @@ double seq_ratio(const std::string & a, const std::string & b);
 std::string strip(const std::string & s);
 bool has_word_char(const std::string & s);   // re.search(r"\w", s)
 
+// What the TTS reads: the line with what VoxCPM2 misreads cleaned up (typographic quotes, *emphasis* -> CAPS, dashes ->
+// commas or "...", brackets, +1/~2/5%). Empty: nothing to say (a separator line like "=====").
+std::string speech_text(const std::string & text);
+// speech_text split into sentences (short ones merged) so each TTS call stays short and keeps its prosody
+std::vector<std::string> speech_chunks(const std::string & text);
+
 }  // namespace rm

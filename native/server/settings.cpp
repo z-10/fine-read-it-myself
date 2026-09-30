@@ -27,7 +27,10 @@ json Settings::to_json(bool mask_keys) const {
         ds.push_back({{"name", d.name}, {"base_url", d.base_url},
                       {"api_key", mask_keys ? (d.api_key.empty() ? "" : "***") : d.api_key},
                       {"model", d.model}, {"json_schema", d.json_schema}});
+    json logins = json::object();
+    for (const auto & [site, cookie] : site_logins) logins[site] = mask_keys ? (cookie.empty() ? "" : "***") : cookie;
     return {{"default_director", default_director},
+            {"site_logins", logins},
             {"directors", ds},
             {"user_sources_dir", user_sources_dir ? json(user_sources_dir->u8string()) : json(nullptr)},
             {"check_interval_hours", check_interval_hours},
@@ -55,6 +58,15 @@ Settings Settings::from_json(const json & j) {
             s.user_sources_dir = fs::u8path(j["user_sources_dir"].get<std::string>());
         if (j.contains("check_interval_hours")) s.check_interval_hours = j["check_interval_hours"].get<double>();
         if (j.contains("share_network")) s.share_network = j["share_network"].get<bool>();
+        if (j.contains("site_logins") && j["site_logins"].is_object())
+            for (const auto & [site, cookie] : j["site_logins"].items()) {
+                std::string c = cookie.get<std::string>();
+                if (c.rfind("Cookie:", 0) == 0 || c.rfind("cookie:", 0) == 0) c = c.substr(7);   // pasted with the header name
+                c.erase(0, c.find_first_not_of(" \t\r\n"));
+                c.erase(c.find_last_not_of(" \t\r\n") + 1);
+                if (c.find_first_of("\r\n") != std::string::npos) throw std::invalid_argument("site login cookie must be one line");
+                if (!c.empty()) s.site_logins[site] = c;
+            }
         if (j.contains("share_port")) {
             s.share_port = j["share_port"].get<int>();
             if (s.share_port < 1024 || s.share_port > 65535) throw std::invalid_argument("share_port must be 1024-65535");

@@ -1,0 +1,35 @@
+# Source definition: Wuxiaworld. The pages are a JavaScript app: the details come from the JSON each page embeds
+# (window.__REACT_QUERY_STATE__), read with "$.path" fields; "list[key=value]" picks the list entry whose key matches.
+# Only the first chapters of most novels are free; the rest need the reader's own account (Settings -> Sites).
+id: wuxiaworld
+name: Wuxiaworld
+homepage: https://www.wuxiaworld.com
+
+match:
+  - '^https?://(www\.)?wuxiaworld\.com/novel/(?P<slug>[^/?#]+)'
+
+novel:
+  url: 'https://www.wuxiaworld.com/novel/{slug}'
+  data: 'window.__REACT_QUERY_STATE__'
+  title: '$.queries[queryKey.0=novel].state.data.item.name'
+  author: '$.queries[queryKey.0=novel].state.data.item.authorName.value'
+  cover: '$.queries[queryKey.0=novel].state.data.item.coverUrl.value'
+  description: '$.queries[queryKey.0=novel].state.data.item.synopsis.value'
+  chapters:
+    # the chapter list is not in the page, only the count; chapter pages follow <abbreviation>-chapter-<n>
+    count: '$.queries[queryKey.0=novel].state.data.item.chapterInfo.chapterGroups.0.counts.total'
+    vars:
+      abbr: '$.queries[queryKey.0=novel].state.data.item.abbreviation|lower'
+    url: 'https://www.wuxiaworld.com/novel/{slug}/{abbr}-chapter-{n}'
+    title: 'Chapter {n}'
+
+chapter:
+  data: 'window.__REACT_QUERY_STATE__'
+  title: '$.queries[queryKey.0=chapter].state.data.item.name'
+  content: 'div.chapter-content'
+  # a paid chapter's page carries only a preview of the text
+  locked: '$.queries[queryKey.0=chapter].state.data.item.pricingInfo.isFree|not'
+
+fetch:
+  delay_seconds: 1.5
+  login: true                   # paid chapters: the reader can add their own login (Settings -> Sites)

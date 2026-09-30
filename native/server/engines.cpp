@@ -36,6 +36,32 @@ static engine::core::BackendType backend_type(const std::string & gpu) {
     return engine::core::BackendType::Vulkan;
 }
 
+// Band-limited resampling (Kaiser-windowed sinc). The engine's own fallback without libsoxr is linear interpolation,
+// which aliases the reference's 8-12 kHz into the voice prompt: VoxCPM2 clones that as hissing "s" endings.
+static std::vector<float> resample(const std::vector<float> & x, int from, int to) {
+    if (from == to || x.empty()) return x;
+    const double ratio = double(to) / from, fc = 0.475 * std::min(1.0, ratio);   // cutoff, cycles per input sample
+    const int half = static_cast<int>(std::ceil(16 / fc / 2));                    // ~16 zero crossings each side
+    const double beta = 8.6, kTwoPi = 6.283185307179586;
+    auto bessel_i0 = [](double v) { double s = 1, t = 1; for (int k = 1; k < 30; ++k) { t *= (v / (2 * k)) * (v / (2 * k)); s += t; } return s; };
+    const double i0b = bessel_i0(beta);
+    std::vector<float> y(static_cast<size_t>(std::llround(x.size() * ratio)));
+    for (size_t n = 0; n < y.size(); ++n) {
+        const double t = n / ratio;
+        const long c = static_cast<long>(std::floor(t));
+        double acc = 0;
+        for (long k = c - half + 1; k <= c + half; ++k) {
+            if (k < 0 || k >= static_cast<long>(x.size())) continue;
+            const double d = t - k, r = d / half;
+            if (std::abs(r) >= 1) continue;
+            const double s = d == 0 ? 1 : std::sin(kTwoPi * fc * d) / (kTwoPi * fc * d);
+            acc += x[k] * 2 * fc * s * bessel_i0(beta * std::sqrt(1 - r * r)) / i0b;
+        }
+        y[n] = static_cast<float>(acc);
+    }
+    return y;
+}
+
 Audio Engines::speak(const std::string & text, const std::filesystem::path & ref_wav, const std::string & ref_text,
                      uint32_t seed) {
     std::lock_guard<std::mutex> lk(tts_mu_);
@@ -51,7 +77,14 @@ Audio Engines::speak(const std::string & text, const std::filesystem::path & ref
         tts_ = std::move(t);
     }
     const auto wav = engine::audio::read_wav_f32(ref_wav);
-    rt::AudioBuffer ref{wav.sample_rate, wav.channels, wav.samples};
+    std::vector<float> mono(wav.samples.size() / std::max(1, wav.channels));
+    for (size_t i = 0; i < mono.size(); ++i) {
+        float acc = 0;
+        for (int c = 0; c < wav.channels; ++c) acc += wav.samples[i * wav.channels + c];
+        mono[i] = acc / std::max(1, wav.channels);
+    }
+    constexpr int kVaeRate = 16000;   // VoxCPM2 AudioVAE input rate
+    rt::AudioBuffer ref{kVaeRate, 1, resample(mono, wav.sample_rate, kVaeRate)};
     rt::TaskRequest req;
     req.text_input = rt::Transcript{text, ""};
     req.audio_input = ref;
@@ -59,6 +92,7 @@ Audio Engines::speak(const std::string & text, const std::filesystem::path & ref
     req.options["reference_text"] = ref_text;
     req.options["seed"] = std::to_string(seed);
     req.options["guidance_scale"] = "2.0";
+    req.options["num_inference_steps"] = "25";   // 10 (default) leaves hissing "s" endings
     tts_->offline->prepare(rt::build_preparation_request(req));
     const auto result = tts_->offline->run(req);
     if (!result.audio_output) throw std::runtime_error("VoxCPM2 produced no audio");

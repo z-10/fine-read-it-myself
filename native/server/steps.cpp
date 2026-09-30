@@ -62,6 +62,9 @@ void Steps::analyze(int64_t cid, const StepLog & log) {
     const Source & src = sources_.at(novel["source"].get<std::string>());
     log("fetching " + ch["url"].get<std::string>(), "fetch", 0.05);
     const ChapterText text = parse_chapter(fetch(ch["url"].get<std::string>(), src), src);
+    if (text.locked)
+        throw std::runtime_error("this chapter is locked on " + src.name + " (the page only has a preview): add your " + src.name +
+                                 " login in Settings -> Sites, with an account that has unlocked it");
     if (text.paragraphs.empty()) throw std::runtime_error("no chapter text found (the site plugin's selectors may need updating)");
     const std::string title = text.title.empty() ? ch["title"].get<std::string>() : text.title;
     const auto spans = split_spans(text.paragraphs);
@@ -404,13 +407,25 @@ void Steps::narrate(int64_t cid, const StepLog & log) {
         const std::string text = l["text"].get<std::string>();
         const fs::path seg = line_wav(cid, static_cast<int>(n));
         const fs::path meta = fs::path(seg).replace_extension(".key");
-        const std::string key = vid + "|" + text;
+        // v2: cleaned text, one TTS call per sentence, 25 diffusion steps, band-limited reference
+        const std::string key = "v2|" + vid + "|" + text;
         Audio a;
         if (fs::exists(seg) && fs::exists(meta) && read_text(meta) == key) {
             a = read_wav16(seg);
         } else {
             const auto [ref_wav, ref_text] = pool.ref(vid);
-            write_wav16(seg, engines_.speak(text, ref_wav, ref_text));
+            Audio line;
+            for (const std::string & sentence : speech_chunks(text)) {
+                const Audio part = engines_.speak(sentence, ref_wav, ref_text);
+                if (!line.sample_rate) line.sample_rate = part.sample_rate;
+                if (!line.samples.empty()) line.samples.insert(line.samples.end(), static_cast<size_t>(line.sample_rate * 0.25), 0.0f);
+                line.samples.insert(line.samples.end(), part.samples.begin(), part.samples.end());
+            }
+            if (!line.sample_rate) {   // nothing to say (a scene break): a pause
+                line.sample_rate = chapter_audio.sample_rate ? chapter_audio.sample_rate : 48000;
+                line.samples.assign(static_cast<size_t>(line.sample_rate * 0.8), 0.0f);
+            }
+            write_wav16(seg, line);
             std::ofstream(meta, std::ios::binary) << key;
             a = read_wav16(seg);
         }

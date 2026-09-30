@@ -8,7 +8,7 @@ namespace rm {
 
 json Library::supported() const {
     json out = json::array();
-    for (const auto & [_, s] : sources_) out.push_back({{"id", s.id}, {"name", s.name}, {"homepage", s.homepage}});
+    for (const auto & [_, s] : sources_) out.push_back({{"id", s.id}, {"name", s.name}, {"homepage", s.homepage}, {"login", s.fetch.value("login", false)}});
     return out;
 }
 

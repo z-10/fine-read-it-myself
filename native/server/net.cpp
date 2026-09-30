@@ -3,6 +3,8 @@
 #include "httplib.h"
 
 #include <fstream>
+#include <thread>
+#include <chrono>
 #include <stdexcept>
 
 namespace rm {
@@ -104,6 +106,7 @@ void http_download(const std::string & url_in, const std::filesystem::path & des
     fs::create_directories(dest.parent_path());
     const fs::path part = dest.u8string() + ".part";
     std::string url = url_in;
+    int busy = 0;   // HTTP 429/503 answers so far: wait (Retry-After, else backoff) and ask again
     for (int redirects = 0; redirects < 10; ++redirects) {
         const Url u = parse_url(url);
         httplib::Client c(u.origin());
@@ -119,11 +122,15 @@ void http_download(const std::string & url_in, const std::filesystem::path & des
         std::string location;
         std::ofstream out;
         int64_t done = 0, total = 0;
-        int status = 0;
+        int status = 0, retry_after = 0;
         auto res = c.Get(
             u.path, headers,
             [&](const httplib::Response & r) {
                 status = r.status;
+                if (r.status == 429 || r.status == 503) {
+                    retry_after = r.has_header("Retry-After") ? std::atoi(r.get_header_value("Retry-After").c_str()) : 0;
+                    return false;
+                }
                 if (r.status >= 300 && r.status < 400) {
                     location = r.get_header_value("Location");
                     return false;   // stop here, follow below
@@ -144,6 +151,13 @@ void http_download(const std::string & url_in, const std::filesystem::path & des
             });
         if (!location.empty()) {
             url = location.find("://") == std::string::npos ? url_join(url, location) : location;
+            continue;
+        }
+        if ((status == 429 || status == 503) && busy < 8) {
+            const int wait = retry_after > 0 ? std::min(retry_after, 300) : std::min(5 << busy, 120);
+            std::this_thread::sleep_for(std::chrono::seconds(wait));
+            ++busy;
+            --redirects;
             continue;
         }
         if (status == 416 && have > 0) {   // .part already complete

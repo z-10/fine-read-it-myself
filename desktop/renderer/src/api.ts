@@ -1,5 +1,5 @@
 // Backend API (readmyself-server, same origin).
-export type Plugin = { id: string; name: string; homepage: string }
+export type Plugin = { id: string; name: string; homepage: string; login: boolean }   // login: paid chapters need the reader's account
 export type Novel = {
   id: number; source: string; url: string; title: string; author: string; cover: string; description: string
   narrator: string; director: string; added_at: number; checked_at: number | null; chapters?: number
@@ -35,6 +35,7 @@ export type ProducerProfile = { name: string; base_url: string; api_key: string;
 export type Settings = {
   default_director: string; directors: ProducerProfile[]; check_interval_hours: number; mp3_bitrate: string
   share_network: boolean; share_port: number   // serve the UI to other devices on the network (no password)
+  site_logins: Record<string, string>   // source id -> Cookie header of the user's login there ("***" when set)
 }
 
 // the voice catalog (tested voices on the Hugging Face hub); installed = in the bundle or downloaded

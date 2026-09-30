@@ -7,6 +7,7 @@
 #include "engines.h"
 #include "library.h"
 #include "llm_presets.h"
+#include "scrape.h"
 #include "settings.h"
 #include "sources.h"
 #include "voices.h"
@@ -488,6 +489,9 @@ void routes(httplib::Server & svr, App & app) {
         std::lock_guard<std::mutex> lk(app.settings_mu);
         std::map<std::string, std::string> old_keys;
         for (const auto & p : app.settings.directors) old_keys[p.name] = p.api_key;
+        if (b.contains("site_logins") && b["site_logins"].is_object())   // same for site logins
+            for (auto & [site, c] : b["site_logins"].items())
+                if (c == "***") c = app.settings.site_logins.count(site) ? app.settings.site_logins.at(site) : "";
         if (b.contains("directors"))   // keep stored keys when the UI sends the mask back
             for (auto & p : b["directors"])
                 if (p.value("api_key", "") == "***") p["api_key"] = old_keys[p.value("name", "")];
@@ -503,6 +507,7 @@ void routes(httplib::Server & svr, App & app) {
             throw HttpError{400, "default producer: " + why};
         app.settings = next;
         save_settings(app.deploy, app.settings);
+        set_site_cookies(app.settings.site_logins);
         if (app.share_refresh) app.share_refresh();
         reply(res, app.settings.to_json(true));
     }));
@@ -715,6 +720,15 @@ int main(int argc, char ** argv) {
             return 1;
         }
     }
+    if (argc >= 3 && std::string(argv[1]) == "--speech-chunks") {   // diagnostics: script.json -> what the TTS reads
+        std::ifstream in(fs::u8path(argv[2]), std::ios::binary);
+        const auto script = nlohmann::json::parse(in);
+        for (const auto & l : script.is_array() ? script : script["lines"]) {   // a script, or --split-spans output
+            std::cout << "#" << l["id"] << "\n";
+            for (const auto & c : speech_chunks(l["text"].get<std::string>())) std::cout << "  | " << c << "\n";
+        }
+        return 0;
+    }
     if (argc >= 3 && std::string(argv[1]) == "--split-spans") {   // diagnostics: chapter text (blank-line paragraphs) -> spans
         std::ifstream in(fs::u8path(argv[2]), std::ios::binary);
         std::string txt((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -743,8 +757,10 @@ int main(int argc, char ** argv) {
             const NovelInfo info = parse_novel(html, url, *hit->first);
             std::cerr << info.title << " / " << info.author << ": " << info.chapters.size() << " chapters" << std::endl;
             if (!info.chapters.empty()) {
-                const ChapterText t = parse_chapter(fetch(info.chapters[0].url, *hit->first), *hit->first);
-                std::cerr << t.title << ": " << t.paragraphs.size() << " paragraphs; first: "
+                const size_t k = argc >= 4 ? std::min<size_t>(std::stoul(argv[3]), info.chapters.size()) - 1 : 0;
+                std::cerr << "GET " << info.chapters[k].url << std::endl;
+                const ChapterText t = parse_chapter(fetch(info.chapters[k].url, *hit->first), *hit->first);
+                std::cerr << t.title << (t.locked ? " [locked]" : "") << ": " << t.paragraphs.size() << " paragraphs; first: "
                           << (t.paragraphs.empty() ? "" : t.paragraphs[0].substr(0, 120)) << std::endl;
             }
             return 0;
@@ -757,6 +773,7 @@ int main(int argc, char ** argv) {
         App app;
         app.deploy = load_deploy(data, models, voices);
         app.settings = load_settings(app.deploy);
+        set_site_cookies(app.settings.site_logins);
         app.db = std::make_unique<DB>(app.deploy.db_path());
         std::vector<fs::path> plugin_dirs{app.deploy.data_dir / "plugins"};   // site plugins the user drops in
         fs::create_directories(plugin_dirs.front());

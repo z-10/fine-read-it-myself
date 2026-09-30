@@ -16,7 +16,7 @@ desktop/renderer/dist/
 desktop/voices/
 
 # the earlier Python service is not part of this repo (kept locally)
-server/
+/server/
 web/
 docker/
 tests/

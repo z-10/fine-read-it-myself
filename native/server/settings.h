@@ -10,6 +10,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,8 @@ struct Settings {
     std::string voice_catalog = kDefaultVoiceCatalog;   // base URL of the downloadable voices (pool.json + files)
     bool share_network = false;   // also serve the UI + API to other devices on the network (no password)
     int share_port = 8765;
+    // source id -> Cookie header of the user's own login on that site (paid chapters their account unlocked)
+    std::map<std::string, std::string> site_logins;
 
     const DirectorProfile * director_profile(const std::string & name) const;
     nlohmann::json to_json(bool mask_keys) const;

@@ -4,7 +4,9 @@
 #include "unicode.h"     // unicode_cpt_flags_from_cpt (llama)
 
 #include <algorithm>
+#include <cctype>
 #include <map>
+#include <set>
 #include <regex>
 #include <unordered_map>
 
@@ -255,6 +257,110 @@ double seq_ratio(const std::string & sa, const std::string & sb) {
     const size_t len = a.size() + b.size();
     if (len == 0) return 1.0;
     return 2.0 * Matcher(a, b).matched() / static_cast<double>(len);
+}
+
+// ---------------------------------------------------------------- what the TTS reads
+
+static bool is_upper(char c) { return c >= 'A' && c <= 'Z'; }
+static bool is_alpha(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
+
+static std::string replace_all(std::string s, const std::string & from, const std::string & to) {
+    for (size_t p = 0; (p = s.find(from, p)) != std::string::npos; p += to.size()) s.replace(p, from.size(), to);
+    return s;
+}
+
+// Tested by ear on VoxCPM2 (2026-09-29): it reads abbreviations fine as written; it invents sounds for marks that
+// are not words (***, _____, *word*); CAPS is how it emphasizes a word; "..." reads an interruption better than a
+// dash, and commas read an aside set off by a pair of dashes better than the dashes.
+std::string speech_text(const std::string & text) {
+    std::string t = strip(text);
+    if (!has_word_char(t)) return "";   // a separator line (=====, ***, _____, ——): a pause, nothing to say
+    for (const auto & [from, to] : std::vector<std::pair<std::string, std::string>>{
+             {"\xE2\x80\x99", "'"}, {"\xE2\x80\x98", "'"}, {"\xE2\x80\x9C", "\""}, {"\xE2\x80\x9D", "\""},   // ’ ‘ “ ”
+             {"\xE2\x80\xA6", "..."}, {"&", " and "}})                                                        // … &
+        t = replace_all(t, from, to);
+
+    // *emphasis* / _emphasis_: a word or a few in capitals; a longer passage just loses its marks
+    static const std::regex emph(R"((^|[^A-Za-z0-9])[*_]+([^*_\s](?:[^*_]*[^*_\s])?)[*_]+(?![A-Za-z0-9]))");
+    std::string out;
+    auto last = t.cbegin();
+    for (std::sregex_iterator it(t.begin(), t.end(), emph), end; it != end; ++it) {
+        const auto & m = *it;
+        std::string inner = m[2].str();
+        if (std::count(inner.begin(), inner.end(), ' ') < 4)
+            for (char & c : inner) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        out.append(last, m[0].first).append(m[1].str()).append(inner);
+        last = m[0].second;
+    }
+    t = out.append(last, t.cend());
+    t.erase(std::remove_if(t.begin(), t.end(), [](char c) { return c == '*' || c == '_' || c == '[' || c == ']' || c == '='; }),
+            t.end());
+
+    // dashes between words (— – -- " - "): a pair around an aside -> commas; a single one (an interruption) -> "..."
+    const std::string D = "\x01";
+    for (const char * d : {" \xE2\x80\x94 ", "\xE2\x80\x94", " \xE2\x80\x93 ", "\xE2\x80\x93", " -- ", "--", " - "})
+        t = replace_all(t, d, D);
+    if (t.size() >= 2 && t.compare(t.size() - 2, 2, " -") == 0) t.replace(t.size() - 2, 2, D);   // "... Found -"
+    t = std::regex_replace(t, std::regex("\x01([^\x01.!?]+)\x01"), ", $1, ");
+    t = std::regex_replace(t, std::regex("\x01\\s*$"), "...");
+    t = replace_all(t, D, "... ");
+
+    t = std::regex_replace(t, std::regex(R"((^|\s)\+(\d))"), "$1plus $2");      // +1 Skill Rank
+    t = std::regex_replace(t, std::regex(R"((^|\s)~\s*(\d))"), "$1about $2");   // ~2 tons
+    t = std::regex_replace(t, std::regex(R"((\d)\s*%)"), "$1 percent");
+    t = std::regex_replace(t, std::regex(R"(\s+([,.!?;:]))"), "$1");              // tidy what the above left
+    t = std::regex_replace(t, std::regex(R"(,(\s*,)+)"), ",");
+    t = std::regex_replace(t, std::regex(R"([,;:]\.\.\.)"), "...");                // "said,--" -> "said..."
+    t = std::regex_replace(t, std::regex(R"(\s{2,})"), " ");
+    t = std::regex_replace(strip(t), std::regex(R"(,$)"), ".");
+    return has_word_char(t) ? t : "";
+}
+
+std::vector<std::string> speech_chunks(const std::string & text) {
+    const std::string s = speech_text(text);
+    static const std::set<std::string> abbrev = {"Mr", "Mrs", "Ms", "Dr", "St", "vs", "Jr", "Sr", "Prof", "Mt"};
+    std::vector<std::string> sents;
+    size_t start = 0;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] != '.' && s[i] != '!' && s[i] != '?') continue;
+        size_t j = i + 1;
+        while (j < s.size() && (s[j] == '.' || s[j] == '!' || s[j] == '?' || s[j] == '"' || s[j] == '\'' || s[j] == ')')) ++j;
+        while (j + 2 < s.size() && s.compare(j, 2, "\xE2\x80") == 0 && (s[j + 2] == '\x9D' || s[j + 2] == '\x99')) j += 3;   // ” ’
+        if (j >= s.size() || s[j] != ' ') continue;
+        size_t k = j;
+        while (k < s.size() && s[k] == ' ') ++k;
+        if (k >= s.size()) continue;
+        const bool next_starts = is_upper(s[k]) || s[k] == '"' || s[k] == '\'' || s.compare(k, 3, "\xE2\x80\x9C") == 0 ||
+                                 s.compare(k, 3, "\xE2\x80\x98") == 0;
+        if (!next_starts) continue;
+        if (s[i] == '.') {   // "Mr. Smith", initials "J. Smith"
+            size_t w = i;
+            while (w > start && is_alpha(s[w - 1])) --w;
+            const std::string word = s.substr(w, i - w);
+            if (abbrev.count(word) || (word.size() == 1 && is_upper(word[0]))) continue;
+        }
+        sents.push_back(strip(s.substr(start, j - start)));
+        start = k;
+        i = k - 1;
+    }
+    if (start < s.size() && has_word_char(s.substr(start))) sents.push_back(strip(s.substr(start)));
+    // long sentences: split at a comma/semicolon; short ones: merged into the one before
+    std::vector<std::string> out;
+    for (std::string x : sents) {
+        while (x.size() > 320) {
+            size_t cut = std::string::npos;
+            for (const char * sep : {"; ", ", "}) {
+                const size_t p = x.rfind(sep, 240);
+                if (p != std::string::npos && p > 80) { cut = p + 1; break; }
+            }
+            if (cut == std::string::npos) break;
+            out.push_back(strip(x.substr(0, cut)));
+            x = strip(x.substr(cut));
+        }
+        if (!out.empty() && (x.size() < 40 || out.back().size() < 40) && out.back().size() + x.size() < 200) out.back() += " " + x;
+        else out.push_back(x);
+    }
+    return out;
 }
 
 }  // namespace rm
