@@ -4,20 +4,22 @@ import NovelPage from './pages/NovelPage'
 import ChapterPage from './pages/ChapterPage'
 import VoicesPage from './pages/VoicesPage'
 import SettingsPage from './pages/SettingsPage'
+import SitesPage from './pages/SitesPage'
 import Activity from './pages/Activity'
 import AcknowledgementsPage from './pages/AcknowledgementsPage'
 import { api, type SetupState } from './api'
 
-// hash routes: #/ #/novel/<id> #/chapter/<id> #/voices #/settings #/activity #/acknowledgements
+// hash routes: #/ #/novel/<id> #/chapter/<id> #/voices #/sites #/settings #/activity #/acknowledgements
 type Route =
-  | { page: 'library' } | { page: 'voices' } | { page: 'settings' } | { page: 'activity' } | { page: 'acknowledgements' }
+  | { page: 'library' } | { page: 'voices' } | { page: 'settings' } | { page: 'sites' } | { page: 'activity' } | { page: 'acknowledgements' }
   | { page: 'novel'; id: number } | { page: 'chapter'; id: number; tab?: string }
 
 function parse(): Route {
   const h = location.hash.replace(/^#\/?/, '')
   const m = h.match(/^(novel|chapter)\/(\d+)(?:\/(\w+))?/)
   if (m) return m[1] === 'chapter' ? { page: 'chapter', id: Number(m[2]), tab: m[3] } : { page: 'novel', id: Number(m[2]) }
-  if (h === 'voices' || h === 'settings' || h === 'activity' || h === 'acknowledgements') return { page: h }
+  if (h === 'plugins') return { page: 'sites' }   // keep existing bookmarks working
+  if (h === 'voices' || h === 'settings' || h === 'sites' || h === 'activity' || h === 'acknowledgements') return { page: h }
   return { page: 'library' }
 }
 
@@ -45,6 +47,7 @@ export default function App() {
           {nav('library', '#/', 'Library')}
           {nav('activity', '#/activity', 'Activity')}
           {nav('voices', '#/voices', 'Voices')}
+          {nav('sites', '#/sites', 'Sites')}
           {nav('settings', '#/settings', 'Settings')}
           {nav('acknowledgements', '#/acknowledgements', 'Acknowledgements')}
         </nav>
@@ -54,6 +57,7 @@ export default function App() {
         {route.page === 'novel' ? <NovelPage key={route.id} id={route.id} />
           : route.page === 'chapter' ? <ChapterPage key={route.id} id={route.id} initialTab={route.tab} />
             : route.page === 'voices' ? <VoicesPage />
+              : route.page === 'sites' ? <SitesPage />
               : route.page === 'settings' ? <SettingsPage />
                 : route.page === 'activity' ? <Activity />
                   : route.page === 'acknowledgements' ? <AcknowledgementsPage />

@@ -19,6 +19,8 @@ desktop/renderer/dist/
 web/
 docker/
 tests/
+!native/tests/
+!native/tests/sources.cpp
 scripts/
 pyproject.toml
 .dockerignore

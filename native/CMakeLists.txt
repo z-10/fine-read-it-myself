@@ -147,6 +147,7 @@ endif()
 
 # built-in resources (frozen schemas, director prompt, source definitions) compiled in
 file(GLOB_RECURSE RM_RESOURCE_FILES CONFIGURE_DEPENDS server/resources/*)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${RM_RESOURCE_FILES})
 set(RM_RESOURCES_INC "")
 foreach(f ${RM_RESOURCE_FILES})
     file(RELATIVE_PATH rel "${CMAKE_CURRENT_SOURCE_DIR}/server/resources" "${f}")
@@ -175,6 +176,25 @@ if (MSVC)
 endif()
 
 # ---------------------------------------------------------------- bundle for the desktop app
+option(RM_BUILD_TESTS "Build native source plugin regression tests" OFF)
+if (RM_BUILD_TESTS)
+    enable_testing()
+    add_executable(rm-source-tests tests/sources.cpp server/sources.cpp server/scrape.cpp
+        server/settings.cpp server/resources.cpp server/text.cpp server/net.cpp server/library.cpp server/db.cpp)
+    target_include_directories(rm-source-tests PRIVATE server third_party third_party/httplib llm/src
+        "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_compile_definitions(rm-source-tests PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT LEXBOR_STATIC)
+    target_link_libraries(rm-source-tests PRIVATE rm_booknlp rm_llm rm_yaml rm_sqlite lexbor_static OpenSSL::SSL OpenSSL::Crypto)
+    if (WIN32)
+        target_link_libraries(rm-source-tests PRIVATE ws2_32 crypt32)
+    endif()
+    if (MSVC)
+        target_compile_options(rm-source-tests PRIVATE /utf-8 /bigobj /permissive-)
+        target_compile_definitions(rm-source-tests PRIVATE NOMINMAX _USE_MATH_DEFINES WIN32_LEAN_AND_MEAN)
+    endif()
+    add_test(NAME source-plugins COMMAND rm-source-tests)
+endif()
+
 # cmake --install build --prefix build/bundle  ->  bin/readmyself-server + app-local runtime libraries
 install(TARGETS readmyself-server RUNTIME DESTINATION bin)
 set(CMAKE_INSTALL_OPENMP_LIBRARIES ON)

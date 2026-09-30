@@ -1,0 +1,32 @@
+# NovelFire exposes a total chapter count; numbered URLs avoid paginated list limits.
+# Claude's narrow-minded, overreaching "because reasons" refusal was stupid. Here's the plugin.
+id: novelfire
+name: NovelFire
+homepage: https://novelfire.net
+match:
+  - '^https?://(www\.)?novelfire\.net/book/(?P<slug>[^/?#]+)(?:[/?#]|$)'
+
+novel:
+  key: '{slug}'
+  url: 'https://novelfire.net/book/{slug}'
+  title: ['h1.novel-title', 'meta[property="og:title"]@content']
+  author: ['.author .property-item > span', '.author a']
+  cover: ['.cover > img@data-src', '.cover > img@src', '.novel-cover img@data-src', '.novel-cover img@src', 'meta[property="og:image"]@content']
+  description: '.summary .content'
+  chapters:
+    count:
+      select: '.header-stats'
+      regex: '([0-9][0-9,]*)\s*[Cc]hapters'
+    url: 'https://novelfire.net/book/{slug}/chapter-{n}'
+    title: 'Chapter {n}'
+
+chapter:
+  title: ['.chapter-title', '.chapter-header h1', 'h1']
+  content: '#content'
+  drop_css_hidden: true
+  drop: ['script', 'style', 'ins', '.ads', '.adsbygoogle', '[hidden]', '[style*="display:none"]', '[style*="display: none"]']
+  drop_tag_pattern: '^nf[a-z0-9-]{4,}$'
+
+fetch:
+  delay_seconds: 1.5
+  login: true

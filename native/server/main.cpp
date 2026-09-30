@@ -160,7 +160,36 @@ void routes(httplib::Server & svr, App & app) {
         reply(res, app.setup->state());
     }));
 
-    svr.Get("/api/sources", H([&](const httplib::Request &, httplib::Response & res) { reply(res, app.library->supported()); }));
+    svr.Get("/api/sources", H([&](const httplib::Request &, httplib::Response & res) {
+        auto plugins = app.library->supported();
+        const auto settings = app.get_settings();
+        for (auto & plugin : plugins) {
+            const auto id = plugin["id"].get<std::string>();
+            plugin["config"] = {{"cookie", settings.site_logins.count(id) ? "***" : ""},
+                {"delay_seconds", settings.site_delays.count(id) ? json(settings.site_delays.at(id)) : json(nullptr)}};
+        }
+        reply(res, plugins);
+    }));
+    svr.Put(R"(/api/sources/([^/]+)/config)", H([&](const httplib::Request & req, httplib::Response & res) {
+        const std::string id = req.matches[1];
+        if (!app.sources.count(id)) throw HttpError{404, "unknown plugin"};
+        const json b = body_of(req);
+        std::lock_guard<std::mutex> lk(app.settings_mu);
+        json merged = app.settings.to_json(false);
+        if (b.contains("cookie") && b["cookie"] != "***") merged["site_logins"][id] = b["cookie"];
+        if (b.contains("delay_seconds")) {
+            if (b["delay_seconds"].is_null()) merged["site_delays"].erase(id);
+            else merged["site_delays"][id] = b["delay_seconds"];
+        }
+        try {
+            const auto next = Settings::from_json(merged);
+            save_settings(app.deploy, next);
+            app.settings = next;
+        } catch (const std::invalid_argument & e) { throw HttpError{400, e.what()}; }
+        set_site_config(app.settings.site_logins, app.settings.site_delays);
+        reply(res, {{"cookie", app.settings.site_logins.count(id) ? "***" : ""},
+            {"delay_seconds", app.settings.site_delays.count(id) ? json(app.settings.site_delays.at(id)) : json(nullptr)}});
+    }));
     svr.Get("/api/novels", H([&](const httplib::Request &, httplib::Response & res) { reply(res, app.library->novels()); }));
 
     svr.Post("/api/novels", H([&](const httplib::Request & req, httplib::Response & res) {
@@ -510,7 +539,7 @@ void routes(httplib::Server & svr, App & app) {
             throw HttpError{400, "default producer: " + why};
         app.settings = next;
         save_settings(app.deploy, app.settings);
-        set_site_cookies(app.settings.site_logins);
+        set_site_config(app.settings.site_logins, app.settings.site_delays);
         if (app.share_refresh) app.share_refresh();
         reply(res, app.settings.to_json(true));
     }));
@@ -813,7 +842,7 @@ int main(int argc, char ** argv) {
         App app;
         app.deploy = load_deploy(data, models, voices);
         app.settings = load_settings(app.deploy);
-        set_site_cookies(app.settings.site_logins);
+        set_site_config(app.settings.site_logins, app.settings.site_delays);
         app.db = std::make_unique<DB>(app.deploy.db_path());
         std::vector<fs::path> plugin_dirs{app.deploy.data_dir / "plugins"};   // site plugins the user drops in
         fs::create_directories(plugin_dirs.front());

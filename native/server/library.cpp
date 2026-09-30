@@ -8,7 +8,8 @@ namespace rm {
 
 json Library::supported() const {
     json out = json::array();
-    for (const auto & [_, s] : sources_) out.push_back({{"id", s.id}, {"name", s.name}, {"homepage", s.homepage}, {"login", s.fetch.value("login", false)}});
+    for (const auto & [_, s] : sources_) out.push_back({{"id", s.id}, {"name", s.name}, {"homepage", s.homepage},
+        {"login", s.fetch.value("login", false)}, {"delay_seconds", s.fetch.value("delay_seconds", 1.0)}});
     return out;
 }
 
@@ -20,19 +21,18 @@ json Library::add(const std::string & url, const std::string & narrator, const s
         throw std::invalid_argument("No source matches this URL. Supported: " + names);
     }
     const Source & src = *hit->first;
-    std::string key = src.id + ":";
-    bool first = true;
-    for (const auto & [k, v] : hit->second)   // sorted by variable name, slug excluded
-        if (k != "slug") {
-            key += (first ? "" : ":") + v;
-            first = false;
-        }
-    if (auto existing = db_.one("SELECT * FROM novels WHERE source_key=?", {key})) {
+    const std::string key = src.novel_key(hit->second);
+    const std::string novel_url = src.novel_url(hit->second);
+    // Also find novels stored with older plugin identity rules, preserving their chapters and audio.
+    if (auto existing = db_.one("SELECT * FROM novels WHERE source_key=? OR (source=? AND url=?)", {key, src.id, novel_url})) {
+        db_.run("UPDATE novels SET source_key=? WHERE id=?", {key, (*existing)["id"]});
+        (*existing)["source_key"] = key;
         refresh((*existing)["id"].get<int64_t>());
         return *existing;
     }
-    const std::string novel_url = src.novel_url(hit->second);
     const NovelInfo info = parse_novel(fetch(novel_url, src), novel_url, src);
+    if (info.chapters.empty())
+        throw std::runtime_error(src.name + ": no chapters found; the site may have blocked the request or changed its layout");
     const int64_t nid = db_.run(
         "INSERT INTO novels (source, source_key, url, title, author, cover, description, narrator, director, added_at, "
         "checked_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",

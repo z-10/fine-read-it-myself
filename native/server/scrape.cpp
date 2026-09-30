@@ -27,29 +27,33 @@ static const char * kUA = "Mozilla/5.0 (X11; Linux x86_64) readmyself/0.1 (+self
 
 static std::mutex cookies_mu;
 static std::map<std::string, std::string> cookies;   // source id -> Cookie header (the user's own login on that site)
+static std::map<std::string, double> delays;
 
-void set_site_cookies(const std::map<std::string, std::string> & by_source) {
+void set_site_config(const std::map<std::string, std::string> & by_source,
+                     const std::map<std::string, double> & by_source_delay) {
     std::lock_guard<std::mutex> lk(cookies_mu);
     cookies = by_source;
+    delays = by_source_delay;
 }
 
 std::string fetch(const std::string & url, const Source & src) {
     static std::mutex mu;
     static std::unordered_map<std::string, double> last;
     const std::string host = parse_url(url).host;
-    const double delay = src.fetch.value("delay_seconds", 1.0);
+    double delay = src.fetch.value("delay_seconds", 1.0);
+    std::map<std::string, std::string> headers{{"User-Agent", kUA}};
+    {
+        std::lock_guard<std::mutex> lk(cookies_mu);
+        if (auto it = delays.find(src.id); it != delays.end()) delay = it->second;
+        auto it = cookies.find(src.id);
+        if (it != cookies.end() && !it->second.empty()) headers["Cookie"] = it->second;
+    }
     {
         std::unique_lock<std::mutex> lk(mu);
         const double t = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
         const double wait = last[host] + delay - t;
         if (wait > 0) std::this_thread::sleep_for(std::chrono::duration<double>(wait));
         last[host] = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
-    }
-    std::map<std::string, std::string> headers{{"User-Agent", kUA}};
-    {
-        std::lock_guard<std::mutex> lk(cookies_mu);
-        auto it = cookies.find(src.id);
-        if (it != cookies.end() && !it->second.empty()) headers["Cookie"] = it->second;
     }
     const auto r = http_get(url, headers, 60);
     if (!r.error.empty()) throw std::runtime_error("fetch " + url + ": " + r.error);
@@ -240,6 +244,19 @@ std::string json_text(const json & v) {
 // 'css' -> text, 'css@attr' -> attribute, '@attr' -> attribute of the node itself, '$.path' -> from the page's JSON
 std::string select_spec(Html & h, lxb_dom_node_t * node, const json & spec_j, const std::string & base_url = "",
                         const json & data = nullptr) {
+    if (spec_j.is_array()) {   // ordered fallbacks, including lazy image attributes
+        for (const auto & spec : spec_j) {
+            auto v = select_spec(h, node, spec, base_url, data);
+            if (!v.empty()) return v;
+        }
+        return "";
+    }
+    if (spec_j.is_object()) {   // extract a value from surrounding text
+        const auto value = select_spec(h, node, spec_j.at("select"), base_url, data);
+        std::smatch match;
+        return std::regex_search(value, match, std::regex(spec_j.at("regex").get<std::string>())) && match.size() > 1
+            ? match[1].str() : "";
+    }
     if (!spec_j.is_string()) return "";
     const std::string spec = spec_j.get<std::string>();
     if (spec.empty()) return "";
@@ -254,7 +271,7 @@ std::string select_spec(Html & h, lxb_dom_node_t * node, const json & spec_j, co
     if (!el) return "";
     if (!a.empty()) {
         const std::string v = Html::attr(el, a);
-        if ((a == "href" || a == "src" || a == "data-url") && !base_url.empty()) return url_join(base_url, v);
+        if (!v.empty() && (a == "href" || a == "src" || a == "data-src" || a == "data-url") && !base_url.empty()) return url_join(base_url, v);
         return v;
     }
     return Html::text(el);
@@ -296,8 +313,12 @@ NovelInfo parse_novel(const std::string & html, const std::string & url, const S
             for (const auto & [k, v] : vars) t = std::regex_replace(t, std::regex("\\{" + k + "\\}"), v);
             return t;
         };
-        const std::string count = select_spec(h, h.root(), spec.at("count"), "", data);
-        const int total = count.empty() ? 0 : std::stoi(count);
+        std::string count = strip(select_spec(h, h.root(), spec.at("count"), "", data));
+        count.erase(std::remove(count.begin(), count.end(), ','), count.end());
+        if (count.empty() || !std::all_of(count.begin(), count.end(), [](char c) { return c >= '0' && c <= '9'; }))
+            throw std::runtime_error(src.name + ": chapter count not found or invalid; the site may have changed its layout");
+        const int total = std::stoi(count);
+        if (total > 100000) throw std::runtime_error(src.name + ": chapter count is too large");
         for (int i = 1; i <= total; ++i) {
             ChapterRef c;
             c.index = i;
@@ -322,6 +343,7 @@ NovelInfo parse_novel(const std::string & html, const std::string & url, const S
     info.title = select_spec(h, h.root(), n.value("title", json(nullptr)), "", data);
     info.author = select_spec(h, h.root(), n.value("author", json(nullptr)), "", data);
     info.cover = select_spec(h, h.root(), n.value("cover", json(nullptr)), url, data);
+    if (!info.cover.empty()) info.cover = url_join(url, info.cover);
     info.description = select_spec(h, h.root(), n.value("description", json(nullptr)), "", data);
     if (info.description.find('<') != std::string::npos) info.description = collapse_ws(Html(info.description).text_of_root());
     return info;
@@ -360,6 +382,17 @@ ChapterText parse_chapter(const std::string & html, const Source & src) {
         }
     }
     auto destroy = [](lxb_dom_node_t * n) { lxb_dom_node_destroy_deep(n); };
+    auto remove_nodes = [&](const std::vector<lxb_dom_node_t *> & nodes) {
+        std::set<lxb_dom_node_t *> selected(nodes.begin(), nodes.end());
+        std::vector<lxb_dom_node_t *> roots;
+        // Determine ancestors before destroying any nodes (nested matches share pointers).
+        for (auto * el : nodes) {
+            bool nested = false;
+            for (auto * p = el->parent; p && p != root; p = p->parent) nested = nested || selected.count(p);
+            if (!nested && el != root) roots.push_back(el);
+        }
+        for (auto * el : roots) destroy(el);
+    };
     if (!hidden.empty()) {
         std::vector<lxb_dom_node_t *> els;
         Html::elements(root, els);
@@ -374,22 +407,17 @@ ChapterText parse_chapter(const std::string & html, const Source & src) {
             for (std::string k; ss >> k;) hit = hit || hidden.count(k);
             if (hit) gone.insert(el);
         }
-        for (auto * el : gone) {
-            bool nested = false;
-            for (lxb_dom_node_t * p = el->parent; p && p != root; p = p->parent) nested = nested || gone.count(p);
-            if (!nested) destroy(el);
-        }
+        remove_nodes(std::vector<lxb_dom_node_t *>(gone.begin(), gone.end()));
+    }
+    if (c.contains("drop_tag_pattern")) {
+        const std::regex pattern(c.at("drop_tag_pattern").get<std::string>());
+        std::vector<lxb_dom_node_t *> els, matches;
+        Html::elements(root, els);
+        for (auto * el : els) if (std::regex_match(Html::name(el), pattern)) matches.push_back(el);
+        remove_nodes(matches);
     }
     if (c.contains("drop"))
-        for (const auto & sel : c["drop"]) {
-            auto nodes = h.select(root, sel.get<std::string>());
-            std::set<lxb_dom_node_t *> set(nodes.begin(), nodes.end());
-            for (auto * el : nodes) {
-                bool nested = false;
-                for (lxb_dom_node_t * p = el->parent; p && p != root; p = p->parent) nested = nested || set.count(p);
-                if (!nested) destroy(el);
-            }
-        }
+        for (const auto & sel : c["drop"]) remove_nodes(h.select(root, sel.get<std::string>()));
     for (auto * br : h.select(root, "br")) {
         lxb_dom_text_t * sp = lxb_dom_document_create_text_node(h.dom(), reinterpret_cast<const lxb_char_t *>(" "), 1);
         lxb_dom_node_insert_before(br, lxb_dom_interface_node(sp));

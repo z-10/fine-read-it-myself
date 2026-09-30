@@ -158,13 +158,20 @@ std::optional<std::map<std::string, std::string>> Source::match_url(const std::s
     return std::nullopt;
 }
 
-std::string Source::novel_url(const std::map<std::string, std::string> & vars) const {
-    std::string t = novel.at("url").get<std::string>();
+static std::string expand(std::string t, const std::map<std::string, std::string> & vars) {
     for (const auto & [k, v] : vars) {
         const std::string key = "{" + k + "}";
         for (size_t p; (p = t.find(key)) != std::string::npos;) t.replace(p, key.size(), v);
     }
     return t;
+}
+
+std::string Source::novel_url(const std::map<std::string, std::string> & vars) const {
+    return expand(novel.at("url").get<std::string>(), vars);
+}
+
+std::string Source::novel_key(const std::map<std::string, std::string> & vars) const {
+    return id + ":" + expand(novel.value("key", novel.at("url").get<std::string>()), vars);
 }
 
 Sources load_sources(const std::vector<std::filesystem::path> & dirs) {

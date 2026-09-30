@@ -9,6 +9,7 @@ match:
   - '^https?://(www\.)?royalroad\.com/fiction/(?P<novel_id>\d+)(/(?P<slug>[^/?#]+))?'
 
 novel:
+  key: '{novel_id}'
   url: 'https://www.royalroad.com/fiction/{novel_id}'
   title: 'div.fic-title h1'
   author: 'div.fic-title h4 a'

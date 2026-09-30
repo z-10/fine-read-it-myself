@@ -4,7 +4,7 @@ Have you ever found out that the web novel you love has no audio version? Or tha
 
 So here it is: a desktop app that turns web novels into multi-voice audiobooks, with a different voice for every character, entirely on your own computer. No subscription, no waiting for the next audiobook release, and nothing leaves your machine.
 
-Track a novel from a supported site (Royal Road is built in; more sites are declarative YAML plugins), and every chapter goes through three steps, each of which you can inspect and edit:
+Track a novel from a supported site (Royal Road, Wuxiaworld and NovelFire are built in; more sites are declarative YAML plugins), and every chapter goes through three steps, each of which you can inspect and edit:
 
 1. **Analysis** — the chapter is split into narration and quotes, and [ModernBookNLP](https://huggingface.co/gasmichel/ModernBookNLP) / [BookNLP](https://github.com/booknlp/booknlp) detect who speaks each quote (a C++/ggml port, run on your GPU).
 2. **Script** — a *producer* double-checks every speaker: a local LLM (Qwen3.5-4B, Qwen3.5-9B or Gemma 4 12B, via llama.cpp) or any OpenAI-compatible endpoint labels the quotes independently; where it disagrees with step 1 it decides between the two, and the uncertain cases are marked for you to confirm. It also describes the characters.
@@ -22,6 +22,23 @@ The same UI works in any browser on your network:
 There is no password: anyone on your network can use it, so only share on a network you trust.
 
 ## Layout
+
+### Site plugins
+
+The **Sites** tab lists every installed site and keeps its login cookie and request delay settings together.
+Changes apply to the next request; existing saved site logins are retained. Leave the delay empty to use the
+plugin default. Cookies are masked in API responses and can be removed with **Forget login**.
+
+Paste a book or chapter URL into the Library, including NovelFire URLs such as
+`https://novelfire.net/book/the-regressed-son-of-a-duke-is-an-assassin/chapter-1`.
+NovelFire chapter discovery uses its published chapter count and numbered URLs. Sites can still reject
+automated requests (for example, HTTP 403); a plugin does not solve browser challenges.
+
+To add or override a site, put a `.yaml` file in `<data>/plugins` and restart the app. An optional
+`user_sources_dir` in `settings.json` supplies a second folder whose definitions take precedence.
+See [the plugin format](native/server/SOURCES.md) and the built-in definitions in `native/server/resources/sources`.
+
+### Code
 
 | folder | what |
 |---|---|

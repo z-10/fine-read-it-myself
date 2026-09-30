@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, type Plugin, type Producer, type ProducerProfile, type Settings, type SetupState, type ShareState } from '../api'
+import { api, type Producer, type ProducerProfile, type Settings, type SetupState, type ShareState } from '../api'
 
 const EMPTY: ProducerProfile = { name: '', base_url: '', api_key: '', model: '', json_schema: true }
 const gb = (n: number) => `${(n / 1e9).toFixed(1)} GB`
@@ -13,8 +13,6 @@ export default function SettingsPage() {
   const [msg, setMsg] = useState('')
   const [error, setError] = useState('')
   const [share, setShare] = useState<ShareState | null>(null)
-  const [sites, setSites] = useState<Plugin[]>([])
-  useEffect(() => { api.plugins().then((p) => setSites(p.filter((x) => x.login))).catch(() => {}) }, [])
   const loadShare = () => setTimeout(() => api.share().then(setShare).catch(() => {}), 400)   // after the listener (re)starts
   useEffect(() => { api.share().then(setShare).catch(() => {}) }, [])
 
@@ -38,7 +36,8 @@ export default function SettingsPage() {
   const complete = (d: ProducerProfile) => !!(d.name.trim() && d.model.trim() && d.base_url.trim())
   async function persist(next: Settings) {
     try {
-      await api.saveSettings({ ...next, directors: next.directors.filter(complete) })
+      const { site_logins, site_delays, ...general } = next
+      await api.saveSettings({ ...general, directors: next.directors.filter(complete) })
       setMsg('Saved'); setError('')
       api.producers().then(setProducers)
     } catch (e) { setError((e as Error).message) }
@@ -117,23 +116,6 @@ export default function SettingsPage() {
       {share?.running && share.urls.length > 0 && (
         <p>Open on other devices: {share.urls.map((u) => <code key={u} style={{ marginRight: 12 }}>{u}</code>)}</p>)}
       {share?.error && <p className="error">{share.error}</p>}
-
-      {sites.length > 0 && <>
-        <h3>Sites</h3>
-        <p className="muted small">Some sites give only the first chapters for free. To read the chapters your own account has
-          unlocked, log in to the site in your browser, open the developer tools (F12) → Network, reload the page, and copy
-          the <code>Cookie</code> request header of the page into the box. It stays on this computer and is only sent to that site.
-          Log out on the site to make it useless.</p>
-        {sites.map((site) => {
-          const v = s.site_logins?.[site.id] ?? ''
-          return (
-            <label key={site.id}>{site.name} login{' '}
-              <input type="password" placeholder="Cookie header" value={v} autoComplete="off" style={{ width: 360 }}
-                onChange={(e) => set('site_logins', { ...s.site_logins, [site.id]: e.target.value })} onBlur={commit} />
-              {v && <button className="ghost tiny" onClick={() => set('site_logins', { ...s.site_logins, [site.id]: '' }, true)}>Forget</button>}
-            </label>)
-        })}
-      </>}
 
       <h3>Defaults</h3>
       <label>Default producer{' '}

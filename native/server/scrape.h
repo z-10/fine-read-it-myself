@@ -27,8 +27,9 @@ struct ChapterText {
     bool locked = false;   // paid/unlockable on the site: the page only has a preview
 };
 
-// Cookie header to send per source id: the user's own login on that site (Settings -> Sites)
-void set_site_cookies(const std::map<std::string, std::string> & by_source);
+// Per-plugin configuration from the Sites tab; takes effect on the next request.
+void set_site_config(const std::map<std::string, std::string> & cookies,
+                     const std::map<std::string, double> & delays);
 
 // GET with the source's per-site politeness delay; throws on transport errors and non-2xx statuses
 std::string fetch(const std::string & url, const Source & src);

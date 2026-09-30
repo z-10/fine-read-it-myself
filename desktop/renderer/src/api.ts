@@ -1,5 +1,8 @@
 // Backend API (readmyself-server, same origin).
-export type Plugin = { id: string; name: string; homepage: string; login: boolean }   // login: paid chapters need the reader's account
+export type PluginConfig = { cookie: string; delay_seconds: number | null }
+export type Plugin = {
+  id: string; name: string; homepage: string; login: boolean; delay_seconds?: number; config?: PluginConfig
+}
 export type Novel = {
   id: number; source: string; url: string; title: string; author: string; cover: string; description: string
   narrator: string; director: string; added_at: number; checked_at: number | null; chapters?: number
@@ -36,6 +39,7 @@ export type Settings = {
   default_director: string; directors: ProducerProfile[]; check_interval_hours: number; mp3_bitrate: string
   share_network: boolean; share_port: number   // serve the UI to other devices on the network (no password)
   site_logins: Record<string, string>   // source id -> Cookie header of the user's login there ("***" when set)
+  site_delays: Record<string, number>
 }
 
 // the voice catalog (tested voices on the Hugging Face hub); installed = in the bundle or downloaded
@@ -97,6 +101,7 @@ export const api = {
   setup: () => req<SetupState>('GET', '/setup'),
   installModels: (optional: string[] = []) => req<SetupState>('POST', '/setup/install', { optional }),
   plugins: () => req<Plugin[]>('GET', '/sources'),
+  savePlugin: (id: string, config: Partial<PluginConfig>) => req<PluginConfig>('PUT', `/sources/${enc(id)}/config`, config),
   novels: () => req<Novel[]>('GET', '/novels'),
   track: (url: string) => req<Novel>('POST', '/novels', { url }),
   novel: (id: number) => req<Novel>('GET', `/novels/${id}`),
@@ -135,7 +140,7 @@ export const api = {
   jobs: () => req<Job[]>('GET', '/jobs'),
   cancelJob: (id: number) => req('POST', `/jobs/${id}/cancel`),
   settings: () => req<Settings>('GET', '/settings'),
-  saveSettings: (s: Settings) => req<Settings>('PUT', '/settings', s),
+  saveSettings: (s: Partial<Settings>) => req<Settings>('PUT', '/settings', s),
 }
 
 export const audioUrl = (chapterId: number, v?: number) => `./api/chapters/${chapterId}/audio${v ? `?v=${v}` : ''}`

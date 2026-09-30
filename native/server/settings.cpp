@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -31,6 +32,7 @@ json Settings::to_json(bool mask_keys) const {
     for (const auto & [site, cookie] : site_logins) logins[site] = mask_keys ? (cookie.empty() ? "" : "***") : cookie;
     return {{"default_director", default_director},
             {"site_logins", logins},
+            {"site_delays", site_delays},
             {"directors", ds},
             {"user_sources_dir", user_sources_dir ? json(user_sources_dir->u8string()) : json(nullptr)},
             {"check_interval_hours", check_interval_hours},
@@ -58,6 +60,12 @@ Settings Settings::from_json(const json & j) {
             s.user_sources_dir = fs::u8path(j["user_sources_dir"].get<std::string>());
         if (j.contains("check_interval_hours")) s.check_interval_hours = j["check_interval_hours"].get<double>();
         if (j.contains("share_network")) s.share_network = j["share_network"].get<bool>();
+        if (j.contains("site_delays")) {
+            s.site_delays = j.at("site_delays").get<std::map<std::string, double>>();
+            for (const auto & [site, delay] : s.site_delays)
+                if (!std::isfinite(delay) || delay < 0 || delay > 60)
+                    throw std::invalid_argument("plugin request delay must be between 0 and 60 seconds");
+        }
         if (j.contains("site_logins") && j["site_logins"].is_object())
             for (const auto & [site, cookie] : j["site_logins"].items()) {
                 std::string c = cookie.get<std::string>();

@@ -1,6 +1,11 @@
 /* ---- navigation & common ---- */
 .top { display: flex; align-items: baseline; gap: 28px; }
-.top nav { display: flex; gap: 18px; }
+.top nav { display: flex; flex-wrap: wrap; gap: 18px; }
+.top { flex-wrap: wrap; }
+.plugin-card { margin: 16px 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.plugin-card h3 { margin-top: 0; }
+.plugin-card fieldset { border: 0; padding: 0; margin: 12px 0 0; min-width: 0; }
+.plugin-card input[type="password"] { width: 100%; max-width: 520px; }
 .top nav a { color: var(--muted); }
 .top nav a.on { color: var(--text); font-weight: 600; }
 .page-title { font-size: 24px; margin: 0 0 16px; }

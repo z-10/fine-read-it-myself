@@ -64,7 +64,7 @@ void Steps::analyze(int64_t cid, const StepLog & log) {
     const ChapterText text = parse_chapter(fetch(ch["url"].get<std::string>(), src), src);
     if (text.locked)
         throw std::runtime_error("this chapter is locked on " + src.name + " (the page only has a preview): add your " + src.name +
-                                 " login in Settings -> Sites, with an account that has unlocked it");
+                                 " login in Sites, with an account that has unlocked it");
     if (text.paragraphs.empty()) throw std::runtime_error("no chapter text found (the site plugin's selectors may need updating)");
     const std::string title = text.title.empty() ? ch["title"].get<std::string>() : text.title;
     const auto spans = split_spans(text.paragraphs);

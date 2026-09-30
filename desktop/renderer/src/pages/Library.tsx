@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
-import { api, type Novel, type Plugin } from '../api'
+import { api, type Novel } from '../api'
 
 export default function Library() {
   const [novels, setNovels] = useState<Novel[] | null>(null)
-  const [plugins, setPlugins] = useState<Plugin[]>([])
   const [url, setUrl] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -11,7 +10,6 @@ export default function Library() {
   const load = () => api.novels().then(setNovels).catch((e) => setError(e.message))
   useEffect(() => {
     load()
-    api.plugins().then(setPlugins).catch(() => {})
   }, [])
 
   async function track(e: React.FormEvent) {
@@ -46,9 +44,6 @@ export default function Library() {
         <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Paste a web novel URL" disabled={busy} />
         <button disabled={busy || !url.trim()}>{busy ? 'Adding…' : 'Track'}</button>
       </form>
-      <p className="hint">
-        Sites: {plugins.map((p) => p.name).join(', ') || '…'}
-      </p>
       {error && <p className="error">{error}</p>}
       {novels === null ? (
         <p className="hint">Loading…</p>

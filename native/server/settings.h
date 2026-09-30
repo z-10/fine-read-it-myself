@@ -51,6 +51,7 @@ struct Settings {
     int share_port = 8765;
     // source id -> Cookie header of the user's own login on that site (paid chapters their account unlocked)
     std::map<std::string, std::string> site_logins;
+    std::map<std::string, double> site_delays;   // optional per-plugin request delay overrides
 
     const DirectorProfile * director_profile(const std::string & name) const;
     nlohmann::json to_json(bool mask_keys) const;

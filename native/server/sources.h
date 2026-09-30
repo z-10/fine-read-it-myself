@@ -24,6 +24,7 @@ struct Source {
 
     std::optional<std::map<std::string, std::string>> match_url(const std::string & url) const;
     std::string novel_url(const std::map<std::string, std::string> & vars) const;
+    std::string novel_key(const std::map<std::string, std::string> & vars) const;
 };
 
 using Sources = std::map<std::string, Source>;   // ordered by id (file names sort the same way)
