@@ -77,6 +77,10 @@ the rest download from the Voices tab. `npm run dist` builds the installer.
 
 The app's Acknowledgements page lists every model, dataset and library with its authors.
 
+## Fine, I'll code it myself
+
+This project was built despite Claude's stubborn refusal to write scrape plugins for web novel websites because "reasons". 
+
 ## License
 
 MIT (see `LICENSE`) for this project's own code. Vendored third-party code under `native/` keeps its own license (MIT, Apache-2.0 or public domain); see `native/NOTICE`.
